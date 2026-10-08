@@ -1,0 +1,11 @@
+# Lint config for the ILL analysis pipeline.
+#
+# Goal: keep `ruff check Analysis/` a MEANINGFUL gate for real defects (dead code,
+# unused imports/vars, undefined names) without drowning in the author's deliberate
+# compact style. We therefore select only the pyflakes (`F`) and syntax-error (`E9`)
+# rules and leave formatting choices alone — long lines and inline `a; b` statements
+# are intentional here and are NOT linted.
+line-length = 120
+
+[lint]
+select = ["F", "E9"]

@@ -1,0 +1,48 @@
+{
+  "participant_id": {
+    "Description": "Participant identifier (p## on the rig)."
+  },
+  "counterbalance_slot": {
+    "Description": "Slot in the pre-generated permuted-block condition-order allocation (ExperimentConductor.ALLOCATION). Usually the participant number, but re-assigned to re-fill the slot of an excluded participant. The per-visit order itself is in scans.tsv (it crosses over between visits)."
+  },
+  "threshold_standing_deg": {
+    "Description": "Tilt giving ~75 % correct, from the standing calibration of the latest visit (each visit's calibration is in ses-01/beh).",
+    "Units": "degree"
+  },
+  "easy_standing_deg": {
+    "Description": "Tilt giving ~85 % correct, standing.",
+    "Units": "degree"
+  },
+  "hard_standing_deg": {
+    "Description": "Tilt giving ~65 % correct, standing.",
+    "Units": "degree"
+  },
+  "threshold_walking_deg": {
+    "Description": "Tilt giving ~75 % correct, from the walking calibration of the latest visit (each visit's calibration is in ses-01/beh).",
+    "Units": "degree"
+  },
+  "easy_walking_deg": {
+    "Description": "Tilt giving ~85 % correct, walking.",
+    "Units": "degree"
+  },
+  "hard_walking_deg": {
+    "Description": "Tilt giving ~65 % correct, walking.",
+    "Units": "degree"
+  },
+  "treadmill_speed_mps": {
+    "Description": "Median belt speed while walking.",
+    "Units": "m/s"
+  },
+  "threshold_angle_deg": {
+    "Description": "Same as threshold_walking_deg (standing if there is no walking calibration); kept for older analysis scripts.",
+    "Units": "degree"
+  },
+  "easy_angle_deg": {
+    "Description": "Same as easy_walking_deg; kept for older scripts.",
+    "Units": "degree"
+  },
+  "hard_angle_deg": {
+    "Description": "Same as hard_walking_deg; kept for older scripts.",
+    "Units": "degree"
+  }
+}

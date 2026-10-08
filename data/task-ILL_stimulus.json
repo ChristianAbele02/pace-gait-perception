@@ -1,0 +1,70 @@
+{
+  "StimulusType": "Gabor patch (sinusoidal grating in a Gaussian envelope)",
+  "Task": "2-AFC orientation discrimination: tilted left or right of vertical",
+  "SpatialFrequency": {
+    "Value": 3.0,
+    "Units": "cycles/degree"
+  },
+  "EnvelopeSigma": {
+    "Value": 0.7,
+    "Units": "degree",
+    "Description": "SD of the Gaussian envelope."
+  },
+  "Contrast": {
+    "Value": 0.7,
+    "Units": "Michelson",
+    "Description": "Fixed for all trials; difficulty is set by tilt only."
+  },
+  "ApertureDiameter": {
+    "Value": 8.7,
+    "Units": "degree",
+    "Description": "Visible disc around the Gabor, on a uniform grey quad of 19.85 deg."
+  },
+  "EccentricityDeg": {
+    "Value": 0.0,
+    "Units": "degree",
+    "Description": "Head-locked at eye level, straight ahead."
+  },
+  "ViewingDistance": {
+    "Value": 2.0,
+    "Units": "m",
+    "Description": "Virtual distance of the head-locked quad."
+  },
+  "NominalDuration": {
+    "Value": 0.1,
+    "Units": "s",
+    "Description": "Intended on-screen time. The measured time of every trial is the duration column of *_events.tsv."
+  },
+  "TiltLevels": "Per participant and condition from the QUEST+ calibration: EASY (~85 % correct), THR (~75 %), HARD (~65 %). Values in participants.tsv; the tilt of each trial in *_events.tsv.",
+  "Display": {
+    "Description": "Interactive Locomotion Lab CAVE (Hofmann 2023, ch. 2): six 65-inch Sony Bravia X85 panels in three columns by two rows, arranged as a half hexagon around the treadmill. The centre column faces along the walking direction; the side columns are rotated by 60 degrees. The upper panels are mounted upside down so the gap between rows is 2 cm. The lower edge of the array is 0.5 m above the belt. From 1.70 m eye height the array covers about 180 x 64 degrees.",
+    "PanelResolution": [
+      3840,
+      2160
+    ],
+    "PanelActiveArea": {
+      "Value": [
+        1.42,
+        0.8
+      ],
+      "Units": "m"
+    },
+    "RefreshRate": {
+      "Value": 60,
+      "Units": "Hz"
+    },
+    "ViewingDistanceFrontWall": {
+      "Value": 1.0,
+      "Units": "m",
+      "Description": "Approximate distance from the participant to the front wall."
+    },
+    "Rendering": "One Linux head node runs the experiment and three Windows render nodes draw one panel column each (UniCave, off-axis projection from the tracked head position)."
+  },
+  "DisplayLatency": {
+    "Value": 0.04,
+    "Units": "s",
+    "Description": "The panels' own input lag: the time between the frame on which a stimulus is rendered (the logged onset) and light on the panels. The full chain from a tracked movement to the picture measured 127.0 +- 2.5 ms (pendulum test, Hofmann 2023, App. C; not re-measured for this study)."
+  },
+  "Apparatus": "Treadmill 2.5 x 1.5 m (Ingenieurbüro Achilles) on a Moog 170-140B-2-D-1 six-axis motion platform, which is held level and still in this study. Participants wear a full-body harness on a retracting lifeline.",
+  "Source": "FollowerPlane component of Assets/ILL-UniCave 1 1.prefab (gaborFrequency 59.6, gaborSigma 0.0353, gaborDiskRadius 0.22, gaborContrast 0.7)."
+}

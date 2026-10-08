@@ -1,0 +1,111 @@
+# ===== Unity (2017.4) ============================================================
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/Assets/AssetStoreTools*
+# Generated IDE solution and project files
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+ExportedObj/
+.consulo/
+.vs/
+.idea/
+.vscode/
+.gradle/
+# Crash and report files
+sysinfo.txt
+crashlytics-build.properties
+System.Exception_
+System.TypeInitializationException_
+*.apk
+*.unitypackage
+
+# ===== Player builds and rig logs (built locally, never committed) ================
+/Builds/
+build.log
+RenderLogs/
+*.log
+
+# ===== Rig settings and secrets ====================================================
+# rig/rig.env holds the installation's host names, users and paths; only the
+# example is tracked. The render-node signing key never lives in the repository.
+/rig/rig.env
+signing_key
+*.key
+*.pem
+*.ppk
+*.p12
+id_rsa*
+id_ed25519*
+id_ecdsa*
+.env
+.env.*
+*.secret
+secrets.*
+
+# ===== Participant data ============================================================
+# Only the BIDS dataset's metadata is tracked. Raw logs, the converted recordings and
+# all derivatives stay local.
+/data/*
+!/data/.bidsignore
+!/data/README.md
+!/data/dataset_description.json
+!/data/participants.json
+!/data/task-ILL_stimulus.json
+# Raw rig logs dropped anywhere else by mistake
+p[0-9][0-9]*-b[0-9]*-t[0-9]*.csv
+p[0-9][0-9]*-b[0-9]*-t[0-9]*.csv.gz
+# Human-subjects paperwork must never enter the working tree; these are a backstop.
+*consent*
+participant_key*
+participants_key*
+screening*
+demographics*
+*.sav
+*.edf
+
+# ===== Analysis outputs and caches =================================================
+/bids_sim/
+/_sim_raw/
+/.pipeline_cache/
+# Davidson et al. (2024) raw data, re-downloaded by
+# `python -m Analysis.davidson_power.effect --download` (third-party, not redistributed)
+Analysis/davidson_power/*.mat
+
+# ===== Python ======================================================================
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+*.egg-info/
+
+# ===== OS and editor clutter =======================================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.tmp
+*.swp
+.claude/settings.local.json

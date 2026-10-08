@@ -1,0 +1,4 @@
+# Developer / CI tooling for the analysis pipeline (runtime deps are in requirements.txt).
+-r requirements.txt
+pytest>=7
+ruff>=0.5

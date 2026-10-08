@@ -1,0 +1,34 @@
+# Let git detect text vs binary, and store text with LF line endings. Unity's .asset,
+# .unity and .prefab files are deliberately left to detection: most are YAML, but some
+# (terrain data) are binary and must never be converted.
+* text=auto
+
+# Shell scripts must stay LF to run on the Linux head node, whatever the editor.
+*.sh   text eol=lf
+
+# Data tables keep their exact bytes (checksums and provenance depend on them).
+*.csv  -text
+*.tsv  -text
+*.json -text
+
+# Binary files, stated explicitly.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.tga    binary
+*.psd    binary
+*.tif    binary
+*.exr    binary
+*.pdf    binary
+*.mp3    binary
+*.wav    binary
+*.aup3   binary
+*.fbx    binary
+*.FBX    binary
+*.ttf    binary
+*.otf    binary
+*.dll    binary
+*.so     binary
+*.bundle binary
+*.gz     binary
+*.zip    binary

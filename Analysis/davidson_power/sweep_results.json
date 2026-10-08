@@ -1,0 +1,224 @@
+{
+ "ns": [
+  180,
+  360,
+  540,
+  720,
+  836,
+  900,
+  1080,
+  1440,
+  1800,
+  2160
+ ],
+ "amps": {
+  "typical (population RMS)": 0.02580858678279746,
+  "upper quartile": 0.0511109338649987,
+  "Davidson's flagged (selected)": 0.061836130247426416
+ },
+ "nsim": 1000,
+ "nperm": 1000,
+ "fpr": 0.053,
+ "res": {
+  "180": {
+   "typical (population RMS)": {
+    "s": 0.07300000000000001,
+    "s_2cps": 0.068,
+    "s_4cps": 0.078,
+    "mc_se": 0.008226238508577295
+   },
+   "upper quartile": {
+    "s": 0.111,
+    "s_2cps": 0.1,
+    "s_4cps": 0.122,
+    "mc_se": 0.00993373041711924
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.139,
+    "s_2cps": 0.14,
+    "s_4cps": 0.138,
+    "mc_se": 0.010939789760319894
+   }
+  },
+  "360": {
+   "typical (population RMS)": {
+    "s": 0.07,
+    "s_2cps": 0.062,
+    "s_4cps": 0.078,
+    "mc_se": 0.008068457101577725
+   },
+   "upper quartile": {
+    "s": 0.163,
+    "s_2cps": 0.17,
+    "s_4cps": 0.156,
+    "mc_se": 0.011680368144883106
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.245,
+    "s_2cps": 0.262,
+    "s_4cps": 0.228,
+    "mc_se": 0.013600551459407815
+   }
+  },
+  "540": {
+   "typical (population RMS)": {
+    "s": 0.101,
+    "s_2cps": 0.094,
+    "s_4cps": 0.108,
+    "mc_se": 0.009528850927577786
+   },
+   "upper quartile": {
+    "s": 0.258,
+    "s_2cps": 0.25,
+    "s_4cps": 0.266,
+    "mc_se": 0.013836039895866157
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.364,
+    "s_2cps": 0.358,
+    "s_4cps": 0.37,
+    "mc_se": 0.015215255502291114
+   }
+  },
+  "720": {
+   "typical (population RMS)": {
+    "s": 0.10500000000000001,
+    "s_2cps": 0.116,
+    "s_4cps": 0.094,
+    "mc_se": 0.009694070352540258
+   },
+   "upper quartile": {
+    "s": 0.351,
+    "s_2cps": 0.368,
+    "s_4cps": 0.334,
+    "mc_se": 0.015093011627902497
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.535,
+    "s_2cps": 0.544,
+    "s_4cps": 0.526,
+    "mc_se": 0.015772602828956293
+   }
+  },
+  "836": {
+   "typical (population RMS)": {
+    "s": 0.12,
+    "s_2cps": 0.136,
+    "s_4cps": 0.104,
+    "mc_se": 0.010276186062932104
+   },
+   "upper quartile": {
+    "s": 0.433,
+    "s_2cps": 0.448,
+    "s_4cps": 0.418,
+    "mc_se": 0.015668790636165893
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.557,
+    "s_2cps": 0.562,
+    "s_4cps": 0.552,
+    "mc_se": 0.015708309902723462
+   }
+  },
+  "900": {
+   "typical (population RMS)": {
+    "s": 0.136,
+    "s_2cps": 0.128,
+    "s_4cps": 0.144,
+    "mc_se": 0.010839926199010766
+   },
+   "upper quartile": {
+    "s": 0.438,
+    "s_2cps": 0.454,
+    "s_4cps": 0.422,
+    "mc_se": 0.015689359451551872
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.626,
+    "s_2cps": 0.644,
+    "s_4cps": 0.608,
+    "mc_se": 0.015301111070768685
+   }
+  },
+  "1080": {
+   "typical (population RMS)": {
+    "s": 0.153,
+    "s_2cps": 0.172,
+    "s_4cps": 0.134,
+    "mc_se": 0.011383804285035824
+   },
+   "upper quartile": {
+    "s": 0.527,
+    "s_2cps": 0.534,
+    "s_4cps": 0.52,
+    "mc_se": 0.01578831846651188
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.71,
+    "s_2cps": 0.704,
+    "s_4cps": 0.716,
+    "mc_se": 0.014349216006458332
+   }
+  },
+  "1440": {
+   "typical (population RMS)": {
+    "s": 0.195,
+    "s_2cps": 0.2,
+    "s_4cps": 0.19,
+    "mc_se": 0.012528966437819204
+   },
+   "upper quartile": {
+    "s": 0.67,
+    "s_2cps": 0.66,
+    "s_4cps": 0.68,
+    "mc_se": 0.014869431730903503
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.836,
+    "s_2cps": 0.842,
+    "s_4cps": 0.83,
+    "mc_se": 0.011709141727727102
+   }
+  },
+  "1800": {
+   "typical (population RMS)": {
+    "s": 0.22499999999999998,
+    "s_2cps": 0.214,
+    "s_4cps": 0.236,
+    "mc_se": 0.013205112646244256
+   },
+   "upper quartile": {
+    "s": 0.777,
+    "s_2cps": 0.772,
+    "s_4cps": 0.782,
+    "mc_se": 0.013163244280951409
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.925,
+    "s_2cps": 0.936,
+    "s_4cps": 0.914,
+    "mc_se": 0.00832916562447884
+   }
+  },
+  "2160": {
+   "typical (population RMS)": {
+    "s": 0.26,
+    "s_2cps": 0.26,
+    "s_4cps": 0.26,
+    "mc_se": 0.013870832707519763
+   },
+   "upper quartile": {
+    "s": 0.869,
+    "s_2cps": 0.858,
+    "s_4cps": 0.88,
+    "mc_se": 0.010669536072388528
+   },
+   "Davidson's flagged (selected)": {
+    "s": 0.969,
+    "s_2cps": 0.968,
+    "s_4cps": 0.97,
+    "mc_se": 0.005480784615363026
+   }
+  }
+ }
+}

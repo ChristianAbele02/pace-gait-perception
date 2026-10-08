@@ -1,0 +1,25 @@
+{
+  "Name": "ILL: visual perception while walking in a CAVE",
+  "BIDSVersion": "1.11.1",
+  "DatasetType": "raw",
+  "Authors": [
+    "Christian Abele-Kretz"
+  ],
+  "Acknowledgements": "Supervised by Prof. Dr. Christoph Kayser and Dr. Norbert Bödekker. Replicates and extends Davidson, Verstraten & Alais (2024), Nat. Commun. 15:2027.",
+  "ReferencesAndLinks": [
+    "https://doi.org/10.1038/s41467-024-45780-4",
+    "Hofmann, F. (2023). Human Motion Planning and -Adjustment during Obstacle Traversal in Virtual Reality. PhD thesis, Faculty of Biology, Bielefeld University. (Apparatus: the Interactive Locomotion Lab, ch. 2 and App. C.)",
+    "https://doi.org/10.1007/s00221-022-06443-2"
+  ],
+  "GeneratedBy": [
+    {
+      "Name": "Analysis/bidsify.py",
+      "Description": "Converts the Unity rig's per-frame CSV logs and QUEST+ calibration logs to BIDS."
+    }
+  ],
+  "SourceDatasets": [
+    {
+      "URL": "bids::sourcedata/"
+    }
+  ]
+}

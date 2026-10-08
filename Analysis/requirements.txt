@@ -1,0 +1,8 @@
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+matplotlib>=3.7
+statsmodels>=0.14   # glmm.py: BinomialBayesMixedGLM (hierarchical population test)
+svgpath2mpl>=1.0    # figures/make_trial_flow.py: Tabler SVG icons as vector paths
+jax[cpu]>=0.4.36   # bayes_glmm.py: NumPyro backend (stage skipped if missing)
+numpyro>=0.15      # bayes_glmm.py: Bayesian mixed models, NUTS

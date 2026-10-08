@@ -1,0 +1,24 @@
+name: Analysis CI
+
+# Lint (real-defect gate) + the inject-and-recover test suite for the Python
+# analysis pipeline. Scoped to Analysis/ so Unity-only changes don't trigger it.
+on:
+  push:
+    paths: ['Analysis/**']
+  pull_request:
+    paths: ['Analysis/**']
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r Analysis/requirements-dev.txt
+      - name: Ruff (dead code / real defects)
+        run: ruff check Analysis/
+      - name: Pytest (inject-and-recover suite)
+        run: python -m pytest Analysis/tests -q

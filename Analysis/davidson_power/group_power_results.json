@@ -1,0 +1,256 @@
+{
+ "rms": [
+  0.02580858678279746,
+  0.020454077861313705
+ ],
+ "coherent": [
+  0.010272481337210732,
+  0.003371356975552461
+ ],
+ "alpha_any": 0.025,
+ "fpr_agnostic": 0.0536,
+ "fpr_coherent": 0.0488,
+ "npp": [
+  6,
+  8,
+  10,
+  12,
+  14,
+  16,
+  20,
+  24,
+  30,
+  36
+ ],
+ "ntrials": [
+  540,
+  720,
+  1080,
+  1440,
+  2160
+ ],
+ "nsim": 4000,
+ "nnull": 10000,
+ "power": {
+  "6": {
+   "540": {
+    "agnostic": 0.277,
+    "coherent": 0.0645
+   },
+   "720": {
+    "agnostic": 0.40225,
+    "coherent": 0.0725
+   },
+   "1080": {
+    "agnostic": 0.567,
+    "coherent": 0.0675
+   },
+   "1440": {
+    "agnostic": 0.733,
+    "coherent": 0.08425
+   },
+   "2160": {
+    "agnostic": 0.8965,
+    "coherent": 0.08525
+   }
+  },
+  "8": {
+   "540": {
+    "agnostic": 0.3625,
+    "coherent": 0.08575
+   },
+   "720": {
+    "agnostic": 0.466,
+    "coherent": 0.0825
+   },
+   "1080": {
+    "agnostic": 0.6695,
+    "coherent": 0.0845
+   },
+   "1440": {
+    "agnostic": 0.83025,
+    "coherent": 0.1105
+   },
+   "2160": {
+    "agnostic": 0.95625,
+    "coherent": 0.1165
+   }
+  },
+  "10": {
+   "540": {
+    "agnostic": 0.37925,
+    "coherent": 0.0935
+   },
+   "720": {
+    "agnostic": 0.519,
+    "coherent": 0.09625
+   },
+   "1080": {
+    "agnostic": 0.7515,
+    "coherent": 0.11675
+   },
+   "1440": {
+    "agnostic": 0.88775,
+    "coherent": 0.1265
+   },
+   "2160": {
+    "agnostic": 0.9765,
+    "coherent": 0.13275
+   }
+  },
+  "12": {
+   "540": {
+    "agnostic": 0.4395,
+    "coherent": 0.0985
+   },
+   "720": {
+    "agnostic": 0.57775,
+    "coherent": 0.10875
+   },
+   "1080": {
+    "agnostic": 0.80825,
+    "coherent": 0.13475
+   },
+   "1440": {
+    "agnostic": 0.914,
+    "coherent": 0.15375
+   },
+   "2160": {
+    "agnostic": 0.9905,
+    "coherent": 0.1685
+   }
+  },
+  "14": {
+   "540": {
+    "agnostic": 0.475,
+    "coherent": 0.11425
+   },
+   "720": {
+    "agnostic": 0.6075,
+    "coherent": 0.1235
+   },
+   "1080": {
+    "agnostic": 0.862,
+    "coherent": 0.1595
+   },
+   "1440": {
+    "agnostic": 0.94925,
+    "coherent": 0.18875
+   },
+   "2160": {
+    "agnostic": 0.99675,
+    "coherent": 0.21625
+   }
+  },
+  "16": {
+   "540": {
+    "agnostic": 0.50125,
+    "coherent": 0.1255
+   },
+   "720": {
+    "agnostic": 0.69075,
+    "coherent": 0.149
+   },
+   "1080": {
+    "agnostic": 0.89175,
+    "coherent": 0.18225
+   },
+   "1440": {
+    "agnostic": 0.96425,
+    "coherent": 0.217
+   },
+   "2160": {
+    "agnostic": 0.99875,
+    "coherent": 0.25525
+   }
+  },
+  "20": {
+   "540": {
+    "agnostic": 0.569,
+    "coherent": 0.16
+   },
+   "720": {
+    "agnostic": 0.754,
+    "coherent": 0.1855
+   },
+   "1080": {
+    "agnostic": 0.93925,
+    "coherent": 0.22875
+   },
+   "1440": {
+    "agnostic": 0.98875,
+    "coherent": 0.2765
+   },
+   "2160": {
+    "agnostic": 0.9995,
+    "coherent": 0.31425
+   }
+  },
+  "24": {
+   "540": {
+    "agnostic": 0.64275,
+    "coherent": 0.19525
+   },
+   "720": {
+    "agnostic": 0.8105,
+    "coherent": 0.23225
+   },
+   "1080": {
+    "agnostic": 0.965,
+    "coherent": 0.28925
+   },
+   "1440": {
+    "agnostic": 0.9955,
+    "coherent": 0.3415
+   },
+   "2160": {
+    "agnostic": 1.0,
+    "coherent": 0.40625
+   }
+  },
+  "30": {
+   "540": {
+    "agnostic": 0.71675,
+    "coherent": 0.245
+   },
+   "720": {
+    "agnostic": 0.87375,
+    "coherent": 0.2955
+   },
+   "1080": {
+    "agnostic": 0.9825,
+    "coherent": 0.3605
+   },
+   "1440": {
+    "agnostic": 0.99925,
+    "coherent": 0.44
+   },
+   "2160": {
+    "agnostic": 1.0,
+    "coherent": 0.51975
+   }
+  },
+  "36": {
+   "540": {
+    "agnostic": 0.77,
+    "coherent": 0.30475
+   },
+   "720": {
+    "agnostic": 0.92,
+    "coherent": 0.35475
+   },
+   "1080": {
+    "agnostic": 0.99375,
+    "coherent": 0.453
+   },
+   "1440": {
+    "agnostic": 1.0,
+    "coherent": 0.529
+   },
+   "2160": {
+    "agnostic": 1.0,
+    "coherent": 0.62
+   }
+  }
+ }
+}
