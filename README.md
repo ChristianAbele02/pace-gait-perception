@@ -599,7 +599,7 @@ except the dataset metadata out of the repository.
 
 Parts of this repository were developed with the assistance of AI coding tools (Anthropic's
 Claude, used through Claude Code). Their role is stated here for transparency and
-reproducibility.
+reproducibility. AI usage as well as declaration follow the [European Commission’s Living guidelines on the responsible use of generative AI in research](https://research-and-innovation.ec.europa.eu/document/download/2b6cf7e5-36ac-41cb-aab5-0d32050143dc_en?filename=ec_rtd_ai-guidelines.pdf).
 
 **What AI was used for**
 
