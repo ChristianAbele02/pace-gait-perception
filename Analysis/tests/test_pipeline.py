@@ -483,6 +483,44 @@ def test_exclusions_table_mirrors_the_gate_and_only_warns():
     assert "side-bias" in ex["sub-02"]["warnings"]
 
 
+def test_data_quality_labels_and_counts():
+    """Each exclusion gets one standard label (manual first, then reversal, timeouts,
+    chance), kept trials are the answered trials of kept blocks, and planned runs
+    without a recording are 'Not recorded' or, after the last visit, 'Visit pending'."""
+    import data_quality as dq
+    rec = "sub-01_ses-02_task-ILL_acq-walking_run-{:02d}"
+    def row(run, beh, rule="pass", manual="-", answered=160, correct=120):
+        return dict(unit="block", recording=rec.format(run), participant="sub-01",
+                    condition="walking", visit="1", n_trials="170", n_answered=str(answered),
+                    n_correct=str(correct), rule=rule, manual=manual, behaviour=beh,
+                    gait="exclude" if manual != "-" else "include")
+    gate = pd.DataFrame([
+        row(1, "include"),
+        row(2, "exclude", "timeouts: 60/170 unanswered; chance: 55/110", answered=110,
+            correct=55),
+        row(3, "exclude", "reversal: 40/160 below chance", manual="flipped view",
+            correct=40),
+        dict(unit="calibration", recording="sub-01_ses-01_task-ILL_acq-walking_run-01_beh",
+             participant="sub-01", condition="walking", visit="1", n_trials="60",
+             n_answered="n/a", n_correct="40", rule="calibration: UNRELIABLE",
+             manual="-", behaviour="exclude", gait="n/a"),
+    ])
+    planned = {"walking": {1: (1, 2, 3, 4), 2: (5, 6)}}
+    units = dq.unit_rows(gate, {rec.format(r): 5 for r in (1, 2, 3)}, planned,
+                         {rec.format(3): "Technical failure"})
+    lab = dict(zip(units["recording"] + "/" + units["run"].astype(str), units["label"]))
+    assert lab[rec.format(1) + "/1"] == "-"
+    assert lab[rec.format(2) + "/2"] == "Too many timeouts"
+    assert lab[rec.format(3) + "/3"] == "Technical failure"
+    missing = units[units["status"] == "missing"].set_index("run")["label"].to_dict()
+    assert missing == {4: "Not recorded", 5: "Visit pending", 6: "Visit pending"}
+    tot = dq.summary_rows(units).query("level == 'total'").iloc[0]
+    assert (tot["blocks_recorded"], tot["blocks_kept"], tot["blocks_missing"]) == (3, 1, 3)
+    assert (tot["trials_recorded"], tot["trials_kept"]) == (510, 160)
+    assert tot["timeouts_in_kept_blocks"] == 10 and tot["calibrations_kept"] == 0
+    assert "## Labels" in dq.markdown(units, dq.summary_rows(units))
+
+
 # ---------------------------------------------------------------------------
 # report.py: provenance captures code + environment + config
 # ---------------------------------------------------------------------------

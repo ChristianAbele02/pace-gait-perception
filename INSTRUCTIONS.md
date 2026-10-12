@@ -409,6 +409,9 @@ participant's walking runs, so each participant counts once, with all of their t
   means the Visit field was set wrongly.
 - **Report.** `data/derivatives/summary/report.html` has one row per block, plus the population
   results and the standing-versus-walking comparison.
+- **Data quality.** `data/derivatives/summary/data_quality.md` counts the blocks and trials
+  recorded, kept and excluded per participant and condition, each exclusion with a standard
+  label. A manual exclusion is labelled in `config.EXCLUSION_LABELS`.
 - **Exclusions.** Check the report's inclusion/exclusion table for blocks flagged for unusable
   gait coverage, chance-level or reversed answers, or an unreliable calibration. Re-run a
   calibration flagged on the rig before its blocks. Otherwise its blocks stay in the analysis

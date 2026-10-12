@@ -57,6 +57,8 @@ data/derivatives/                                README.md indexes the folders b
 Nothing in the pipeline needs a complete set of blocks. Every stage pools the runs a
 participant has, so a lost block or a lost visit costs trials, not the participant.
 
+- **Data quality.** `summary/data_quality.md` sums up what was recorded, kept and excluded,
+  per participant, condition, block and trial, with one standard label per exclusion.
 - **Missing blocks.** `report.py` writes `summary/block_inventory.tsv`. It lists, per participant
   and condition, the planned runs (`config.PLANNED_RUNS`) against those present, the missing
   runs, whole missing visits, truncated logs, runs outside the plan, missing calibrations, and
@@ -250,6 +252,7 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `gait_prc.py` | EXPLORATORY — do stimulus onsets or button presses shift the gait rhythm? Phase response curve against a frame-locked random-time null (§5). |
 | `block_rules.py` | builds the exclusion gate `qc/gate.tsv` (chance / reversal / timeouts per block, unreliable calibrations out of the refit, plus the manual list), with a behaviour and a gait scope; read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
 | `report.py` | dataset summary TSV + self-contained HTML report; writes `provenance.json`, `exclusions.tsv` (each block's gate decision for both scopes, plus non-blocking warnings) and the N-per-stage ledger. |
+| `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
 | `prevalence_planning.py` | prevalence-precision (HPDI width) vs N planning simulation. |
 | `simulate_participants.py` | N synthetic participants in the two-visit topology into a separate `bids_sim/`, run through the whole pipeline. Trials come from a Davidson-calibrated generative drift-diffusion model; the injected truth is written to `sim_truth.json`. |
 | `tests/test_pipeline.py` | inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |

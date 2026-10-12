@@ -9,7 +9,9 @@ Outputs (``derivatives/summary/``):
   * ``report.html``: the table, dataset-level figures embedded, per-recording figures
     linked (see ``_img_tag``);
   * ``exclusions.tsv``, ``block_inventory.tsv``, ``counterbalance_qc.tsv``,
-    ``provenance.json``.
+    ``provenance.json``;
+  * ``data_quality.md`` and its two TSVs: recorded / kept / excluded counts with
+    standard exclusion labels, written by ``data_quality.main``.
 
 Usage::
 
@@ -35,6 +37,7 @@ try:
     from . import bids_io
     from . import phase_analysis as pa
     from . import block_rules
+    from . import data_quality
     from . import power
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +45,7 @@ except ImportError:
     import bids_io
     import phase_analysis as pa
     import block_rules
+    import data_quality
     import power
 
 
@@ -522,6 +526,10 @@ def main():
     inv_html = (inv.to_html(index=False, na_rep="n/a", border=0, classes="summary")
                 if not inv.empty else "<p><em>no participants</em></p>")
 
+    _, dq = data_quality.main(quiet=True)
+    dq_html = (dq.to_html(index=False, na_rep="n/a", border=0, classes="summary")
+               if not dq.empty else "<p><em>no gate</em></p>")
+
     cbdf = pd.DataFrame(_counterbalance_qc())
     if not cbdf.empty:
         cbdf.to_csv(out_dir / "counterbalance_qc.tsv", sep="\t", index=False, na_rep="n/a")
@@ -555,6 +563,11 @@ with 25 % or more of the trials unanswered (an unreliable calibration leaves onl
 calibration refit). <code>gait</code>: blocks used by analyses of the walking alone; only the manual
 list excludes there. Warnings never exclude anything.</p>
 {excl_table_html}
+<h2>Data quality overview</h2>
+<p class="note">Blocks and trials recorded, kept and excluded per participant x condition,
+per condition and in total, with standard exclusion labels (Analysis/data_quality.py;
+legend and per-block register in <code>summary/data_quality.md</code>).</p>
+{dq_html}
 <h2>N per analysis stage</h2>
 <p class="note">What each stage was left with after the gate (<code>qc/gate_ledger.tsv</code>):
 participants and blocks the gate let in, and <code>n_analysed</code>, the participants that
@@ -611,6 +624,11 @@ gaps in the head data get no stride phase.</p>
             print(f"    ! {r['participant']}: {r['problem']}")
     print(f"\nSummary TSV  -> {out_dir/'dataset_summary.tsv'}")
     print(f"Exclusions   -> {out_dir/'exclusions.tsv'}")
+    if not dq.empty:
+        tot = dq[dq["level"] == "total"].iloc[0]
+        print(f"Data quality -> {out_dir/'data_quality.md'} ({tot['blocks_kept']}/"
+              f"{tot['blocks_recorded']} blocks, {tot['trials_kept']}/"
+              f"{tot['trials_recorded']} trials kept)")
     if not inv.empty:
         print(f"Blocks       -> {out_dir/'block_inventory.tsv'}")
     if not cbdf.empty:

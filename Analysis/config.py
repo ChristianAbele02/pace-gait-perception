@@ -51,38 +51,25 @@ PLANNED_RUNS = {"walking": {1: (1, 2, 3, 4), 2: (5, 6, 7, 8)},
 # Recordings excluded from all analyses, keyed by Recording.label(), with the reason. They
 # stay in the BIDS dataset (reason in scans.tsv) and still go through QC; the exclusion gate
 # (derivatives/qc/gate.tsv) removes them from both scopes.
-EXCLUDED_RECORDINGS = {
-    "sub-02_ses-02_task-ILL_acq-walking_run-02":
-        "OptiTrack failure flipped the CAVE view and left the stimulus hard to see "
-        "(operator report); responses reversed from the first trial (accuracy 26%, easy "
-        "trials 20%); 193 s of head tracking lost.",
-    "sub-04_ses-02_task-ILL_acq-standing_run-01":
-        "Ran at ceiling (98% correct) at ~21 deg tilt because the standing calibration railed "
-        "(one-key responses, threshold 21.4 deg). All of visit 1's walking blocks failed the "
-        "block rule (one-key streaks at chance), so this block alone would put sub-04 into the "
-        "behavioural contrasts with a ceiling standing block and no walking. Excluded "
-        "2026-10-05; sub-04's walking gait stays in.",
-    "sub-04_ses-02_task-ILL_acq-standing_run-02":
-        "Visit 2's standing block passes the block rule (108/169 answered, 63.9%) but with a "
-        "strong right bias (142R/27L). All of visit 2's walking blocks failed the rule again "
-        "(one-key streaks at chance), so this block alone would put sub-04 into the "
-        "behavioural contrasts with no walking. Excluded 2026-10-07 for consistency with "
-        "standing run-01; sub-04's walking gait stays in.",
-}
+# Example:
+#   "sub-XX_ses-02_task-ILL_acq-walking_run-NN":
+#       "Tracking failure flipped the CAVE view (operator report); responses reversed.",
+EXCLUDED_RECORDINGS: dict[str, str] = {}
+
+# Standard label for each manual exclusion above, used by the data-quality overview
+# (data_quality.py) next to the labels the automatic rule produces. One of
+# data_quality.MANUAL_LABELS; a recording missing here is labelled "Manual exclusion".
+# Example: {"sub-XX_ses-02_task-ILL_acq-walking_run-NN": "Technical failure"}
+EXCLUSION_LABELS: dict[str, str] = {}
 
 # Setup-screen values logged wrongly, keyed by (subject, visit), with the reason. bidsify
 # applies them to scans.tsv, participants.tsv and the calibration beh tables; raw logs in
 # sourcedata/ are left unchanged.
-SETUP_CORRECTIONS = {
-    ("sub-01", 2): {
-        "participant": 1, "counterbalance_slot": 1, "condition_order_first": "standing",
-        "reason": "The setup screen still held sub-03's values (participant 3, slot 3, "
-                  "walking first) for both calibrations, the standing block and walking "
-                  "runs 05-06; the operator corrected it before run 07 and renamed the "
-                  "earlier files to p01. The visit ran standing first (standing block "
-                  "09:06, walking from 09:23), as slot 1 prescribes and runs 07-08 logged.",
-    },
-}
+# Example:
+#   ("sub-XX", 2): {"participant": XX, "counterbalance_slot": N,
+#                   "condition_order_first": "standing",
+#                   "reason": "The setup screen still held the previous participant's values."},
+SETUP_CORRECTIONS: dict[tuple[str, int], dict] = {}
 
 # Automatic block exclusion rule (block_rules.py): chance, reversal, timeouts, unreliable
 # calibration. Verdicts go to derivatives/qc/gate.tsv. The rule applies to behavioural
