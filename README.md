@@ -607,8 +607,6 @@ reproducibility.
   first-pass implementations that were then reviewed, corrected and reworked by hand.
 - Debugging — tracing faults such as render-node flicker, a treadmill speed spike and stale
   tracking frames, and proposing candidate fixes.
-- Tooling and documentation — drafting and refining the build, deploy and log-collection
-  scripts and parts of the analysis tooling and documentation.
 
 **What remains the author's own work**
 
@@ -617,12 +615,9 @@ paradigm, the choice of statistical tests, the interpretation of results and the
 drawn from them. All AI-suggested code was read, tested, corrected where wrong, and accepted
 only after the author understood and verified it. The analysis pipeline is covered by an
 inject-and-recover test suite (`Analysis/tests/`) and a lint/test CI workflow, and numerical
-claims in the documentation were checked against those tests rather than taken on trust. Where
-AI-derived work turned out to be wrong — most notably the overstated Davidson effect size — the
-author corrected it and documented the correction openly in `Analysis/davidson_power/README.md`.
+claims in the documentation were checked against those tests rather than taken on trust.
 
 The repository was **conceived, directed and verified by the author**, who takes full
-responsibility for its contents. AI was a tool used in its construction, in the same sense as a
-compiler, a linter or a statistics library — not a co-author.
+responsibility for its contents.
 
 — Christian Abele-Kretz
