@@ -188,18 +188,27 @@ def test_constrained_shuffle_no_long_runs():
 
 
 # ---------------------------------------------------------------------------
-# Calibration slope/lapse: pooled refit beats single, recovers truth
+# Calibration slope/lapse: the refit at the rig's calibration design
 # ---------------------------------------------------------------------------
-def test_calibration_joint_refit_recovers_slope():
-    """The joint fit (shared slope/lapse, per-participant thresholds) recovers the true
-    slope; naive pooling is biased low by threshold heterogeneity."""
-    rec = cr.simulation_study(n_participants=12, n_trials=90,
-                              true_slope=3.5, true_lapse=0.03)
-    assert rec["joint_slope"] is not None
-    assert abs(rec["joint_slope"] - 3.5) < 0.8, f"joint slope off: {rec['joint_slope']}"
-    assert rec["joint_lapse"] <= 0.10
-    # the naive pooled slope should be the flattened (lower) one
-    assert rec["pooled_slope"] <= rec["joint_slope"] + 0.3
+def test_calibration_refit_simulation_at_rig_design():
+    """At the rig's design the joint refit recovers a free lapse (better with the catch
+    trials), overestimates the slope from ~50 trials per calibration, and fixing the
+    lapse above the truth inflates the slope further."""
+    rec = cr.simulation_study(n_reps=4, n_calibrations=(24,), true_slope=3.0,
+                              true_lapse=0.01, seed=7)
+    s = {r["strategy"]: r for r in rec["summary"]}
+    assert abs(s["catch"]["lapse_median"] - 0.01) < 0.01
+    assert s["free"]["slope_median"] > 3.0
+    assert s["rig"]["slope_median"] > s["free"]["slope_median"]
+    assert s["rig"]["lapse_median"] == cr.RIG_LAPSE
+
+
+def test_fit_joint_fixed_lapse():
+    """A fixed lapse is held, not fitted, and still gives a usable slope."""
+    obs = _sim_cond_observers(3.5, n_part=8, seed=11)
+    fixed = cr.fit_joint(obs, lapse=0.03)
+    assert fixed["ok"] and fixed["lapse"] == 0.03
+    assert abs(fixed["slope_beta"] - cr.fit_joint(obs)["slope_beta"]) < 1.5
 
 
 def _sim_cond_observers(slope, n_part=10, n_trials=90, seed=0):

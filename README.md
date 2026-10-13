@@ -232,6 +232,13 @@ robustly but not slope (Paire et al. 2022). Slope and lapse are instead **checke
 `Analysis/calibration_refit.py` fits threshold, slope and lapse by maximum likelihood on the
 pooled calibration trials, and `Analysis/threshold_by_condition.py` tests whether the slope
 differs between standing and walking (likelihood-ratio test) rather than assuming it does not.
+A simulation at the rig's design (`calibration/figures/calibration_refit_simulation.png`;
+thresholds around 1.2°, 34–66 QUEST+ trials, a catch trial at 12° every ~6 trials, true lapse
+1 %, 200 repetitions for 12 and 24 calibrations per condition) shows the limits: with ~50 trials
+per calibration the shared slope comes out about 40 % too steep (true 3.0, recovered ~4.3),
+which more calibrations do not remove but more trials per calibration do; fixing the lapse at
+the QUEST+ value 0.05 inflates it further (~7); a free lapse is recovered well, best with the
+catch trials. The refitted slope is therefore an upper estimate.
 
 **Procedure.** Two interleaved trackers (prior centres 4° and 2.5°, prior SD 0.5 log₁₀) in
 shuffled order. The **final estimate is the pooled posterior** over both trackers' trials.
