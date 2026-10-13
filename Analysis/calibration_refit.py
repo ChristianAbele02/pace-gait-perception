@@ -456,6 +456,8 @@ def refit_from_bids() -> dict | None:
     Calibrations rejected by the exclusion gate (UNRELIABLE, rule active) are left out: a
     participant at chance has no slope, and a flat calibration pushes the shared slope to
     its bound and creates a spurious standing-vs-walking difference.
+
+    Each calibration contributes its QUEST+ and catch trials; warm-up trials are left out.
     """
     beh = bids_io.find_calibration_tables()
     gated = bids_io.excluded_calibrations()
@@ -466,10 +468,11 @@ def refit_from_bids() -> dict | None:
         df = pd.read_csv(f, sep="\t")
         if "presented_tilt_deg" not in df or "correct" not in df:
             continue
-        # Drop catch and warm-up trials: they use a large fixed tilt (~100 % correct), are
-        # not QUEST+ trials, and would bias the threshold and flatten the slope.
+        # Catch trials (12 deg, ~10x threshold) stay in: with a lapse term they inform only
+        # the lapse, which the QUEST+ trials barely constrain (see simulation_study).
+        # Warm-up practice trials are dropped: errors there are learning, not lapses.
         if "tracker" in df:
-            df = df[~df["tracker"].astype(str).isin(["catch", "warmup"])]
+            df = df[df["tracker"].astype(str) != "warmup"]
         d = df[pd.to_numeric(df["correct"], errors="coerce").isin([0, 1])]
         x = pd.to_numeric(d["presented_tilt_deg"], errors="coerce").to_numpy()
         c = pd.to_numeric(d["correct"], errors="coerce").to_numpy()

@@ -238,7 +238,8 @@ thresholds around 1.2°, 34–66 QUEST+ trials, a catch trial at 12° every ~6 t
 per calibration the shared slope comes out about 40 % too steep (true 3.0, recovered ~4.3),
 which more calibrations do not remove but more trials per calibration do; fixing the lapse at
 the QUEST+ value 0.05 inflates it further (~7); a free lapse is recovered well, best with the
-catch trials. The refitted slope is therefore an upper estimate.
+catch trials, so the real refit uses each calibration's QUEST+ and catch trials (warm-up
+trials left out). The refitted slope is therefore an upper estimate.
 
 **Procedure.** Two interleaved trackers (prior centres 4° and 2.5°, prior SD 0.5 log₁₀) in
 shuffled order. The **final estimate is the pooled posterior** over both trackers' trials.
