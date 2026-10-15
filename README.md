@@ -4,10 +4,10 @@
 Master's thesis project · Bielefeld University</p>
 
 <p align="center">
-  <img alt="Unity" src="https://img.shields.io/badge/Unity-2017.4.25f1-000000?logo=unity&logoColor=white">
-  <img alt="Analysis" src="https://img.shields.io/badge/analysis-Python%203.12-3776AB?logo=python&logoColor=white">
-  <img alt="Data" src="https://img.shields.io/badge/data-Motion--BIDS%201.11.1-FF6F00">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-CAVE%20%2B%20treadmill-2E8B57">
+  <a href="https://unity.com/releases/editor/whats-new/2017.4.25"><img alt="Unity" src="https://img.shields.io/badge/Unity-2017.4.25f1-000000?logo=unity&logoColor=white"></a>
+  <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Analysis" src="https://img.shields.io/badge/analysis-Python%203.12-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://bids-specification.readthedocs.io/en/v1.11.1/modality-specific-files/motion.html"><img alt="Data" src="https://img.shields.io/badge/data-Motion--BIDS%201.11.1-FF6F00"></a>
+  <a href="#1-hardware"><img alt="Platform" src="https://img.shields.io/badge/platform-CAVE%20%2B%20treadmill-2E8B57"></a>
   <a href="https://doi.org/10.1038/s41467-024-45780-4"><img alt="Replicates Davidson 2024" src="https://img.shields.io/badge/replicates-Davidson%202024-0A7BBB"></a>
 </p>
 
