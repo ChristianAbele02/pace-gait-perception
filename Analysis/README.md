@@ -447,7 +447,8 @@ this study is designed around (R = 0.33).
 
 `common_phase.py` runs a one-sample Hotelling T² on the per-participant coefficient pairs,
 at 2 and 4 cps with Holm over the pair. Two properties beyond the error rate: it is **exact
-in small samples** (F reference, not asymptotic χ², which matters at N = 12–20), and it is
+in small samples** (F reference, not asymptotic χ², which matters between the minimum of 12
+analysable participants and the 20 recruited), and it is
 **the statistic `davidson_power/power.py` already simulated** — the 15 % power figure
 in the design comes from it, so the pipeline and its own power analysis now use one
 estimator. A regression test pins the two implementations to 1e-12.

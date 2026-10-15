@@ -12,8 +12,8 @@ inflated ~2.8×. Consequences:
   count, and are **exploratory**.
 * The confirmatory test is the phase-agnostic [`group_agnostic.py`](../group_agnostic.py):
   **91 %** power at N = 12 × 1440 walking trials, where the common-phase test reaches **15 %**.
-* The design is **8 walking + 2 standing blocks** over two visits, N 12–20 analysable,
-  rather than 6 + 4 (*Design trade-off* below).
+* The design is **8 walking + 2 standing blocks** over two visits, recruiting N = 20 with a
+  minimum of 12 analysable, rather than 6 + 4 (*Design trade-off* below).
 
 ## Code
 
@@ -200,8 +200,9 @@ numbers.
 | Order crossover between visits | yes | not possible |
 | H2 free of time-on-task? | yes (within-participant) | no (between only) |
 
-The planned N of 12–20 is set by attrition, H2 and the exploratory analyses, not by the
-confirmatory test, which the two-visit design already powers at N ≈ 7.
+Recruitment is 20 participants, with 12 analysable as the minimum. The margin above the
+minimum is set by attrition, H2 and the exploratory analyses, not by the confirmatory test,
+which the two-visit design already powers at N ≈ 7.
 
 ---
 

@@ -75,8 +75,9 @@ vector PDF. **Submit the PDF.**
 > Power (%) of the confirmatory phase-agnostic test over the simulated grid of
 > participants × walking blocks (180 trials per block, 4000 studies per cell). The black
 > staircase separates cells at or above 80 % from those below, drawn along cell edges
-> without interpolation. The orange box is the adopted design: eight blocks at the planned
-> N of 12–20, at 91–99 % power. Six blocks clear 80 % from N = 12 and four blocks only
+> without interpolation. The orange box is the adopted design: eight blocks from the minimum
+> of 12 analysable participants to the recruitment target of 20, at 91–99 % power. Six
+> blocks clear 80 % from N = 12 and four blocks only
 > from N = 24.
 
 ## Figure 5 — The adopted design
@@ -214,7 +215,7 @@ vector PDF. **Submit the PDF.**
 | Order between visits | crosses over (within-participant) |
 | Calibration | QUEST+, per condition, per visit |
 | Calibration lead-in | 5 warm-up trials (12° → 6°) |
-| Target N | 12–20 participants |
+| Recruitment | 20 participants (minimum 12 analysable) |
 | Confirmatory population test | phase-agnostic Σ\|z\|² at 2 and 4 cps |
 | Population power at N = 12 → 20 | 0.92 → 0.99 |
 

@@ -52,7 +52,7 @@ discrimination.
 | **Conditions** | standing vs walking (walk-in-place on the treadmill, 1.0 m/s) |
 | **Calibration** | per-condition QUEST+ (threshold only; β 2.5, λ 0.05 fixed) |
 | **Difficulty mix** | 0.85 / 0.10 / 0.05 at the 75 / 85 / 65 % points; ISI 4 s ± 0.75 s, response window 2 s |
-| **Collection design** | 2 visits × (4 walking + 1 standing block) = **8 walking + 2 standing** blocks per participant (**~1440 walking trials**); N 12–20 analysable, enrol 15–16 |
+| **Collection design** | 2 visits × (4 walking + 1 standing block) = **8 walking + 2 standing** blocks per participant (**~1440 walking trials**); recruit **N = 20** (minimum **12** analysable, from the power analysis) |
 | **Rig** | Linux head node + 3 Windows render nodes; 6 half-walls (65″ 4K panels); OptiTrack over VRPN; Modbus treadmill on a level, unused 6-DOF motion base |
 | **Data / analysis** | Motion-BIDS → gait / stride phase → **confirmatory phase-agnostic population test** (2 & 4 cycles per stride, Holm); common-phase, Bayesian mixed-model and prevalence routes as secondary |
 
@@ -417,6 +417,10 @@ The effect size is **measured, not assumed**: it comes from Davidson et al.'s (2
 come from simulating this pipeline's own tests at that effect. Code and write-up:
 [`Analysis/davidson_power/`](Analysis/davidson_power/README.md).
 
+**Sample size: 20 participants will be recruited.** The minimum requirement is **12 analysable
+participants**, the N at which the confirmatory test reaches 0.93 power under the adopted design
+(below); the margin of 8 covers exclusions and drop-out across the two visits.
+
 ### The number that shapes the analysis: R = 0.33
 
 Davidson's participants oscillate at **idiosyncratic preferred phases**; their cross-participant
@@ -452,7 +456,8 @@ a 1.10× threshold ratio. The split also buys robustness to attrition: N = 12 st
   the per-participant test and prevalence are **exploratory**. This is a property of the effect
   size, not of the pipeline.
 - **The power figures are a ceiling.** The simulation gives every participant identical trial
-  counts, accuracy and uniform phase coverage; enrolment is budgeted at 15–16 to retain 12.
+  counts, accuracy and uniform phase coverage; 20 participants are recruited so that at least
+  the 12 the power analysis requires remain analysable after exclusions and drop-out.
 - **The real cost is fatigue**: 48 min of walking per visit. Breaks are 5 min after every second
   walking block, and `qc.py` flags easy-trial accuracy per block and first versus last third.
 - **The effect size is smaller than first assumed.** An earlier extraction gave 0.071; reading
