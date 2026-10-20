@@ -239,11 +239,14 @@ def _trial_level(rec):
     if ev.empty:
         return None
     ev["onset"] = ev["onset"].astype(float)
-    ev["acc"] = np.where(ev["response_correct"] == 1, 1.0, 0.0)
+    # accuracy over answered trials, as in phase_analysis (a timeout is NaN)
+    ev["acc"] = np.where(ev["response"].notna(),
+                         np.where(ev["response_correct"] == 1, 1.0, 0.0), np.nan)
     ev["rt"] = ev["response_time"].astype(float)
     # phase_analysis' RT filter uses ev["phase_target"]; here it holds the onset time.
     ev["phase_target"] = ev["onset"]
-    out = {"accuracy": (ev["onset"].to_numpy(float), ev["acc"].to_numpy(float))}
+    ans = ev[ev["acc"].notna()]
+    out = {"accuracy": (ans["onset"].to_numpy(float), ans["acc"].to_numpy(float))}
     # RT: correct trials, anticipations/outliers removed, log10; _clean_rt returns
     # (onset[keep], log10_rt[keep], info).
     rt = pa._clean_rt(ev)

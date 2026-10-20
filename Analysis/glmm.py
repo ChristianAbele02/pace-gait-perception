@@ -100,6 +100,7 @@ def _walking_trial_phases(rec) -> pd.DataFrame | None:
     if tp is None:
         return None
     ev, _ = tp
+    ev = ev[ev["acc"].notna()]                   # accuracy is over answered trials
     return pd.DataFrame({"sub": rec.label().split("_")[0], "condition": "walking",
                          "phase": ev["phase_target"].to_numpy(float),
                          "correct": ev["acc"].to_numpy(float),
@@ -130,7 +131,7 @@ def _standing_trial_phases(rec) -> pd.DataFrame | None:
     cont, _ = gait_mod.continuous_stride_phase(tg, yf, None, None)
 
     ev = bids_io.load_events(rec)
-    ev = ev[(ev["is_training"] == 0) & ev["onset"].notna()].copy()
+    ev = ev[(ev["is_training"] == 0) & ev["onset"].notna() & ev["response"].notna()].copy()
     if ev.empty:
         return None
     _, pct_stride = gait_mod.phase_at_hilbert(ev["onset"].to_numpy(float), tg, cont)

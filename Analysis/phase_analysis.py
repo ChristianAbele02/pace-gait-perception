@@ -1,8 +1,15 @@
 """Stride-phase modulation of performance, after Davidson et al. (2024) Fig 3.
 
 For each non-training trial the stride phase at target onset is taken from gait.py, and
-each measure is tested for oscillation over the stride. Measures: accuracy (primary) and
-reaction time (secondary). Response likelihood was removed (see config, outcome measures).
+each measure is tested for oscillation over the stride. Measures:
+
+  * accuracy (primary), over the answered trials. A timeout is a missing response, not a
+    wrong one: in a two-alternative task it says nothing about which tilt was seen;
+  * reaction time (secondary), log10 RT of the correct answered trials;
+  * timeouts (secondary), P(no response) over all trials at their onset phase, run for
+    participants with at least ``MIN_TIMEOUTS`` timeouts.
+
+Response likelihood was removed (see config, outcome measures).
 
   * 40 phase bins per stride (1 stride = 2 steps);
   * first-order Fourier fit ``A·cos(w·x+φ)+c`` at 0.1-10 cycles per stride (cps) in 0.1
@@ -80,6 +87,11 @@ def holm_bonferroni(pvals) -> np.ndarray:
 # --- Reaction-time filtering (b5) ---
 RT_MIN_S = 0.15        # faster responses are anticipations
 RT_MAD_K = 3.0         # reject |log RT - median| > k * (1.4826 * MAD)
+
+# --- Timeouts as a measure of their own ---
+# Below this many unanswered trials the 0/1 series is almost constant: the fit has
+# nothing to fit and the permutation null collapses towards zero variance.
+MIN_TIMEOUTS = 10
 
 
 def difficulty_adjust(y: np.ndarray, level: np.ndarray) -> np.ndarray:
@@ -411,8 +423,12 @@ def _trial_phases(rec, troughs, step_foot=None, tg=None, cont_phase=None):
         return None
     onset = ev["onset"].to_numpy(float)
     ev["phase_target"] = _phase_of(onset, troughs, step_foot, tg, cont_phase)
-    ev["acc"] = np.where(ev["response_correct"] == 1, 1.0, 0.0)   # timeout or incorrect = 0
-    # Difficulty-adjusted accuracy for the Fourier fit; ``acc`` stays raw.
+    # Accuracy over answered trials: 1 correct, 0 wrong, NaN for a timeout. ``timeout`` is
+    # the 0/1 outcome for the timeouts measure.
+    answered = ev["response"].notna().to_numpy()
+    ev["timeout"] = (~answered).astype(float)
+    ev["acc"] = np.where(answered, np.where(ev["response_correct"] == 1, 1.0, 0.0), np.nan)
+    # Difficulty-adjusted accuracy for the Fourier fit (timeouts stay NaN); ``acc`` stays raw.
     ev["acc_adj"] = difficulty_adjust(
         ev["acc"].to_numpy(float),
         ev["difficulty"].to_numpy(dtype=object) if "difficulty" in ev.columns else None)
@@ -423,11 +439,25 @@ def _trial_phases(rec, troughs, step_foot=None, tg=None, cont_phase=None):
     return ev.dropna(subset=["phase_target"]), resp.dropna(subset=["phase_response"])
 
 
+def _timeout_measure(phase: np.ndarray, timeout: np.ndarray) -> dict | None:
+    """P(no response) over the stride, or None with fewer than ``MIN_TIMEOUTS`` timeouts.
+
+    Same binned fit and trial-level permutation as accuracy, on the 0/1 timeout outcome of
+    all trials at their onset phase. Under H0 the trials are exchangeable, so the null is
+    exact. Not difficulty-adjusted.
+    """
+    phase = np.asarray(phase, float)
+    timeout = np.asarray(timeout, float)
+    if np.nansum(timeout) < MIN_TIMEOUTS:
+        return None
+    return analyse_measure(phase, timeout, "mean")
+
+
 def analyse(rec) -> dict | None:
     """Stride-phase analysis of one walking block.
 
-    Runs the confirmatory 2/4 cps test and grid scan on accuracy and RT and writes the
-    block's JSON, arrays and figure. Returns ``None`` for standing (no stride).
+    Runs the confirmatory 2/4 cps test and grid scan on accuracy, RT and timeouts and
+    writes the block's JSON, arrays and figure. Returns ``None`` for standing (no stride).
 
     Per-block results are for QC and figures. Population stages use the per-participant
     pooling in :func:`subject_pooled_analysis`, on which the design's power is based.
@@ -453,10 +483,13 @@ def analyse(rec) -> dict | None:
     # RT: correct trials, anticipations and outliers removed, log10 (b5).
     rt_clean = _clean_rt(ev)
     rt_measure = analyse_measure(rt_clean[0], rt_clean[1], "mean") if rt_clean else None
+    ans = ev[ev["acc"].notna()]
     measures = {
-        "accuracy": analyse_measure(ev["phase_target"].to_numpy(),
-                                    ev["acc_adj"].to_numpy(), "mean"),
+        "accuracy": analyse_measure(ans["phase_target"].to_numpy(),
+                                    ans["acc_adj"].to_numpy(), "mean"),
         "reaction_time": rt_measure,
+        "timeouts": _timeout_measure(ev["phase_target"].to_numpy(float),
+                                     ev["timeout"].to_numpy(float)),
     }
     rt_info = rt_clean[2] if rt_clean else {}
     if all(m is None for m in measures.values()):
@@ -464,7 +497,8 @@ def analyse(rec) -> dict | None:
 
     report = {"recording": rec.label(), "n_trials": int(len(ev)),
               "n_trials_no_phase": _n_unphased(rec, len(ev)),
-              "n_responses": int(len(resp)), "rt_qc": rt_info,
+              "n_responses": int(len(resp)), "n_timeouts": int(ev["timeout"].sum()),
+              "rt_qc": rt_info,
               "onset_phase_coverage": _circ_stats(ev["phase_target"].to_numpy(float)),
               "measures": {k: _json_measure(v) for k, v in measures.items() if v}}
     out_dir = bids_io.deriv_dir("phase", rec.sub, rec.ses)
@@ -562,7 +596,7 @@ def _draw_measures(axes, measures, tags) -> None:
 def _draw_spectrum(ax, measures, tag: str, title: str = "R² spectrum") -> None:
     """R² over the frequency grid; dotted = 95 % permutation CI, grey line = 2 cps."""
     ax.axvline(2.0, color=S.GREY, ls="--", lw=0.9, zorder=0, label="2 cps (gait)")
-    for key in ("accuracy", "reaction_time"):
+    for key in ("accuracy", "reaction_time", "timeouts"):
         m = measures.get(key)
         if m:
             col = S.MEASURE[key]
@@ -571,7 +605,7 @@ def _draw_spectrum(ax, measures, tag: str, title: str = "R² spectrum") -> None:
     ax.set_xlabel("frequency (cycles per stride)"); ax.set_ylabel("R²")
     ax.set_xlim(0, 10)
     ax.set_ylim(0, ax.get_ylim()[1] * 1.25)          # room for the legend above the CI
-    ax.legend(loc="upper right", ncol=3, fontsize=8)
+    ax.legend(loc="upper right", ncol=2, fontsize=8)
     S.panel(ax, tag, f"{title}  (dotted = 95% CI)", fontsize=10)
 
 
@@ -584,12 +618,12 @@ def _draw_onsets(axL, axP, ev, g) -> None:
     tmpl, tmpl_sd = gait_mod._gait_template(tg, yf, troughs, step_foot)
     phase = ev["phase_target"].to_numpy(float)
     acc = ev["acc"].to_numpy(float)
-    ok = np.isfinite(phase)
+    ok = np.isfinite(phase) & np.isfinite(acc)          # answered trials; timeouts left out
     phase, acc = phase[ok], acc[ok]
     if tmpl is None or not np.size(tmpl) or phase.size < 6:
         axL.axis("off"); axP.axis("off")
         return
-    groups = (("hit", phase[acc == 1.0], S.GREEN), ("miss", phase[acc != 1.0], S.RED))
+    groups = (("correct", phase[acc == 1.0], S.GREEN), ("wrong", phase[acc == 0.0], S.RED))
     bin_w = 100.0 / N_ONSET_BINS
     centers = np.linspace(bin_w / 2, 100 - bin_w / 2, N_ONSET_BINS)
     xx = np.linspace(0, 100, 300)
@@ -618,8 +652,8 @@ def _draw_onsets(axL, axP, ev, g) -> None:
     h1, l1 = axL.get_legend_handles_labels(); h2, l2 = axR.get_legend_handles_labels()
     axL.legend(h1 + h2, l1 + l2, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=6,
                fontsize=7.5, frameon=False)
-    S.panel(axL, "a", f"Onsets over the head-height bob  (hit vs miss; n = {phase.size})",
-            fontsize=10)
+    S.panel(axL, "a", f"Onsets over the head-height bob  (correct vs wrong; "
+                      f"n = {phase.size} answered)", fontsize=10)
 
     axP.set_theta_zero_location("N"); axP.set_theta_direction(-1)
     theta = centers / 100.0 * 2 * np.pi
@@ -711,11 +745,26 @@ def _recording_trials(rec):
     if tp is None:
         return None
     ev, resp = tp
-    out = {"accuracy": (ev["phase_target"].to_numpy(float), ev["acc_adj"].to_numpy(float))}
+    ans = ev[ev["acc"].notna()]
+    out = {"accuracy": (ans["phase_target"].to_numpy(float), ans["acc_adj"].to_numpy(float))}
     rt = _clean_rt(ev)
     if rt:
         out["reaction_time"] = (rt[0], rt[1])
+    out["timeouts"] = (ev["phase_target"].to_numpy(float), ev["timeout"].to_numpy(float))
     return out
+
+
+def _pooled_measures(pools: dict) -> dict:
+    """Run each measure on its concatenated (phase, value) pool."""
+    measures = {}
+    for k, (phs, vals) in pools.items():
+        if not phs:
+            continue
+        ph, val = np.concatenate(phs), np.concatenate(vals)
+        m = _timeout_measure(ph, val) if k == "timeouts" else analyse_measure(ph, val, "mean")
+        if m:
+            measures[k] = m
+    return measures
 
 
 def subject_walk_label(sub: str, ses: str) -> str:
@@ -737,7 +786,7 @@ def subject_pooled_analysis(recs) -> None:
         if rec.condition == "walking":
             by_sub[(rec.sub, rec.ses)].append(rec)
     for (sub, ses), subrecs in sorted(by_sub.items()):
-        pools = {"accuracy": ([], []), "reaction_time": ([], [])}
+        pools = {"accuracy": ([], []), "reaction_time": ([], []), "timeouts": ([], [])}
         used = []
         for rec in subrecs:
             tr = _recording_trials(rec)
@@ -748,13 +797,7 @@ def subject_pooled_analysis(recs) -> None:
                 pools[k][0].append(ph)
                 if val is not None:
                     pools[k][1].append(val)
-        measures = {}
-        for k, (phs, vals) in pools.items():
-            if not phs:
-                continue
-            m = analyse_measure(np.concatenate(phs), np.concatenate(vals), "mean")
-            if m:
-                measures[k] = m
+        measures = _pooled_measures(pools)
         label = subject_walk_label(sub, ses)
         out_dir = bids_io.deriv_dir("phase", sub, ses)
         if not measures:
@@ -764,12 +807,14 @@ def subject_pooled_analysis(recs) -> None:
             print(f"  pooled {sub} {ses}: no analysable walking trials in "
                   f"{len(subrecs)} run(s) - participant left out")
             continue
-        n_trials = int(sum(len(p) for p in pools["accuracy"][0]))
+        n_trials = int(sum(len(p) for p in pools["timeouts"][0]))
+        n_timeouts = int(sum(v.sum() for v in pools["timeouts"][1]))
         rep = {"recording": label, "sub": sub, "session": ses, "n_runs": len(used),
-               "n_trials": n_trials,
+               "n_trials": n_trials, "n_answered": n_trials - n_timeouts,
+               "n_timeouts": n_timeouts,
                "pooled_from_runs": [r.label() for r in used],
                "runs_without_trials": [r.label() for r in subrecs if r not in used],
-               "onset_phase_coverage": _circ_stats(np.concatenate(pools["accuracy"][0])),
+               "onset_phase_coverage": _circ_stats(np.concatenate(pools["timeouts"][0])),
                "measures": {k: _json_measure(v) for k, v in measures.items()}}
         (out_dir / f"{label}_phase.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")
         np.savez(out_dir / f"{label}_phase.npz",
@@ -781,7 +826,7 @@ def subject_pooled_analysis(recs) -> None:
                               "null_coef_2cps", "null_coef_4cps")})
         flagged = [k for k, m in measures.items() if m["significant"]]
         print(f"  pooled {sub} {ses}: {len(used)} walking run(s), {n_trials} trials "
-              f"-> {', '.join(flagged) if flagged else 'n.s.'}")
+              f"({n_timeouts} timeouts) -> {', '.join(flagged) if flagged else 'n.s.'}")
 
 
 def pooled_analysis(recs) -> dict | None:
@@ -791,7 +836,7 @@ def pooled_analysis(recs) -> dict | None:
     can drive the result. Population inference is in group_agnostic, common_phase and
     population.py.
     """
-    pools = {"accuracy": ([], []), "reaction_time": ([], [])}
+    pools = {"accuracy": ([], []), "reaction_time": ([], []), "timeouts": ([], [])}
     subs = set()
     for rec in recs:
         tr = _recording_trials(rec)
@@ -806,17 +851,11 @@ def pooled_analysis(recs) -> dict | None:
     if n_part < 2:
         return None
 
-    results = {}
-    for k, (phs, vals) in pools.items():
-        if not phs:
-            continue
-        m = analyse_measure(np.concatenate(phs), np.concatenate(vals), "mean")
-        if m:
-            results[k] = m
+    results = _pooled_measures(pools)
     if not results:
         return None
 
-    n_trials = int(sum(len(p) for p in pools["accuracy"][0]))
+    n_trials = int(sum(len(p) for p in pools["timeouts"][0]))
     out_dir = bids_io.deriv_dir("phase")
     _pooled_figure(results, n_part, n_trials)
     payload = {"n_participants": n_part, "n_trials_pooled": n_trials,

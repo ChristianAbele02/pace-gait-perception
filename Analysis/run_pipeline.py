@@ -21,7 +21,7 @@ try:
                    gam_phase, ddm_phase, prevalence_planning, stance_foot, sdt_phase,
                    common_phase, head_stability, gait_dynamics, gait_prc,
                    gait_phase_methods, calibration_transfer, bayes_glmm, bids_io,
-                   stage_cache, config as C)
+                   trial_table, step_table, stage_cache, config as C)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bidsify, calibration, calibration_refit, qc, block_rules, gait, phase_analysis
@@ -31,10 +31,12 @@ except ImportError:
     import common_phase
     import head_stability, gait_dynamics, gait_prc, gait_phase_methods
     import calibration_transfer, bayes_glmm, stage_cache
+    import trial_table, step_table
     import bids_io
     import config as C
 
-STAGES = ["bids", "calibration", "gate", "calib_refit", "qc", "gait", "phase",
+STAGES = ["bids", "calibration", "gate", "calib_refit", "qc", "gait", "trial_table",
+          "step_table", "phase",
           "agnostic", "common_phase", "glmm", "bayes_glmm", "population", "planning", "clocktime",
           "conditions",
           "threshold", "calib_transfer", "descriptive", "onset_response", "gam", "ddm", "stance_foot",
@@ -132,6 +134,14 @@ def main() -> None:
         _lap('4. Gait extraction')
         print("\n########## 4. Gait extraction ##########")
         gait.main()
+    if "trial_table" in steps:
+        _lap('4a. Trial table (derivatives/trial_table/trials.tsv)')
+        print("\n########## 4a. Trial table (derivatives/trial_table/trials.tsv) ##########")
+        trial_table.main()
+    if "step_table" in steps:
+        _lap('4b. Step table (derivatives/step_table/steps.tsv)')
+        print("\n########## 4b. Step table (derivatives/step_table/steps.tsv) ##########")
+        step_table.main()
     if "phase" in steps:
         _lap('5. Stride-phase modulation (per participant)')
         print("\n########## 5. Stride-phase modulation (per participant) ##########")

@@ -481,14 +481,24 @@ DERIVATIVE_GROUPS = {
                 "template and durations, head path with the onsets, stance-foot decode), "
                 "time series in the .npz (gait.py).",
     },
+    "Tables for further analysis": {
+        "trial_table": "Every trial of every block in one table: design, response, RT "
+                       "validity, stride phase and stance foot at onset, and the exclusion "
+                       "gate's decisions (trial_table.py).",
+        "step_table": "Every step of every walking block in one table: duration, stance "
+                      "foot and its evidence, head sway and bob over the step "
+                      "(step_table.py).",
+    },
     "Confirmatory and secondary tests": {
-        "phase": "Stride-phase modulation of accuracy and reaction time: one sheet per walking "
-                 "block, the per-participant confirmatory 2 and 4 cps tests, and the pooled "
+        "phase": "Stride-phase modulation of accuracy (answered trials), reaction time and the "
+                 "timeout rate: one sheet per walking block, the per-participant "
+                 "confirmatory 2 and 4 cps tests, and the pooled "
                  "exploratory aggregate (phase_analysis.py).",
         "population": "Group-level tests across participants: phase-agnostic test, common "
                       "phase, GLMM, prevalence (group_agnostic.py, common_phase.py, glmm.py, "
                       "population.py).",
-        "conditions": "Standing versus walking: accuracy, reaction time and thresholds "
+        "conditions": "Standing versus walking: accuracy (answered trials), reaction time "
+                      "and thresholds "
                       "(conditions.py, threshold_by_condition.py).",
         "clocktime": "Control analysis on clock time instead of stride phase, one figure per "
                      "block (clocktime_control.py).",

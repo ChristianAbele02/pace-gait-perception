@@ -57,6 +57,7 @@ MIN_PT = 8.0
 MEASURE = {            # stride-phase measures
     "accuracy": BLUE,
     "reaction_time": RED,
+    "timeouts": GREY,
     "response_counts": PURPLE,
     "response_likelihood": PURPLE,
 }
@@ -74,6 +75,7 @@ FREQGRP = {"2cps": PURPLE, "4cps": TEAL, ">5": GREY, "other": GREY, "none": MIST
 MEASURE_LABEL = {
     "accuracy": "accuracy",
     "reaction_time": "reaction time",
+    "timeouts": "timeout rate",
     "response_counts": "response likelihood",
     "response_likelihood": "response likelihood",
 }

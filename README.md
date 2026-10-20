@@ -407,6 +407,8 @@ python Analysis/plot_calibration.py p05-v1-b1-t01_calibration_walking.csv --no-s
 ```
 
 A missed response (2 s window) is logged as a timeout and, in calibration, never fed to QUEST+.
+The analysis treats it the same way: accuracy is the proportion correct of the **answered**
+trials, and whether a trial was answered at all is its own secondary measure, the timeout rate.
 
 ---
 
@@ -490,8 +492,9 @@ Every block becomes its own BIDS recording through a **`run-` entity**, and all 
 **pool a participant's walking runs**, so a participant counts once, on all ~1440 trials.
 
 **Method in one paragraph.** Each trial gets the stride phase of its onset (troughs of the
-vertical head bob = double support; one stride = two steps). Per participant, accuracy and RT
-are binned over the stride and fitted with a Fourier series; the confirmatory frequencies are
+vertical head bob = double support; one stride = two steps). Per participant, accuracy (over
+the answered trials: a timeout is a missing response, not a wrong one), RT and the timeout
+rate are binned over the stride and fitted with a Fourier series; the confirmatory frequencies are
 **2 and 4 cycles per stride** (Holm), where Davidson's responders peak, and significance comes
 from 1000 trial-level permutations. The **confirmatory population test**
 (`group_agnostic.py`) sums each participant's squared, studentised Fourier coefficient against
@@ -501,6 +504,11 @@ phase (`common_phase.py`), Bayesian mixed models with a standing control on a vi
 clock (`bayes_glmm.py`), a descriptive GLMM, and Bayesian prevalence (Ince et al. 2022)
 de-biased by measured detection power. A **clock-time control** folds onsets on fixed temporal
 periods instead of the stride, to rule out an effect locked to time rather than to gait.
+
+**Long tables for analyses outside the pipeline:** `trial_table.py` writes every trial
+(design, response, RT validity, stride phase and stance foot at onset, gate decisions) and
+`step_table.py` every walking step (duration, stance foot, sway and bob), joinable on
+`(recording, step)`.
 
 **Further analyses, all exploratory:** stance-foot contrast (`stance_foot.py`; the 2/4 cps
 test is exactly invariant to which foot is down, so foot labels matter only for the odd

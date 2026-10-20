@@ -22,6 +22,7 @@ data/                            (BIDS root = config.BIDS_DIR)
   ▼
 data/derivatives/                                README.md indexes the folders by role
   ├── qc/ calibration/ gait/                       preprocessing and quality, per subject × session
+  ├── trial_table/ step_table/                     trials.tsv, steps.tsv: long tables for analyses outside the pipeline
   ├── phase/ population/ conditions/ clocktime/    confirmatory and secondary tests
   ├── descriptive/                                 descriptive overview
   ├── onset_response/ gam_phase/ ddm_phase/ sdt/ stance_foot/        exploratory: responses
@@ -163,7 +164,7 @@ participant has, so a lost block or a lost visit costs trials, not the participa
 
 ```bash
 pip install -r Analysis/requirements.txt
-python -m Analysis.run_pipeline          # all 28 stages, in dependency order
+python -m Analysis.run_pipeline          # all 30 stages, in dependency order
 python -m Analysis.run_pipeline --no-cache   # the same, recomputing everything
 
 # or stage by stage:
@@ -172,6 +173,8 @@ python -m Analysis.calibration           # QUEST+ convergence + reliability chec
 python -m Analysis.calibration_refit     # offline slope/lapse refit (--bids for real data)
 python -m Analysis.qc                    # tracking / behaviour QC
 python -m Analysis.gait                  # gait template, stride cycle, head trace
+python -m Analysis.trial_table           # every trial in one table (trial_table/trials.tsv)
+python -m Analysis.step_table            # every step in one table (step_table/steps.tsv)
 python -m Analysis.phase_analysis        # per-participant stride-phase modulation
 python -m Analysis.group_agnostic        # CONFIRMATORY phase-agnostic population test
 python -m Analysis.common_phase          # SECONDARY common-phase test (Hotelling T2)
@@ -228,15 +231,17 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `plot_calibration.py` | standalone CLI: convergence figure from a raw calibration CSV. |
 | `qc.py` | timing, tracking-channel, cleaning, treadmill and behaviour QC; writes one QC sheet per block (`*_qc.png`: head position raw vs cleaned with the size of every correction, belt speed, onsets, accuracy by level). |
 | `gait.py` | band-pass, trough (double-support) detection, stride cycle, gait template, `phase_at()`, Hilbert phase, effective-fs QC, and the **stance-foot labelling** (`label_steps`): per-step lateral-sway evidence, decoded under an alternation prior (Viterbi) and cross-checked against an independent rigid-body roll channel. Writes one gait sheet per block (`*_gait.png`: stride, head path, stance-foot decode). |
-| `phase_analysis.py` | 40-bin stride binning, Fourier fit 0.1–10 cps, **weighted by bin occupancy** and run on **difficulty-adjusted** accuracy (primary) and RT (secondary) (§4b). **Primary per-participant test = confirmatory at 2 and 4 cps (Holm)**; the full-grid max-R² scan is exploratory. Significance by 1000× trial-level permutation with re-binning. |
-| `group_agnostic.py` | **THE CONFIRMATORY POPULATION TEST.** `S(f) = Σᵢ\|zᵢ\|²/sᵢ²` at 2 and 4 cps, Holm-corrected, **studentised** by each participant's own null so no one dominates the sum by being noisy (under H0 each contributes 1, so `S ≈ n`). Runs on the **primary** measure (accuracy) plus two secondary ones; only accuracy carries a family-wise claim. Invariant to rotating any individual `zᵢ`, so it detects oscillation whatever phase each participant prefers — the point at Davidson's coherence of R = 0.33, where it reaches 91 % power at N = 12 × 1440 against a common-phase contrast's 15 %. Its null reuses `phase_analysis`'s own permutations, so it is exact by construction. |
+| `trial_table.py` | every trial of every block in one long table, `trial_table/trials.tsv` (+ JSON column descriptions), for analyses outside the pipeline: visit, block order and the gap before each block, tilt, response, timeout, RT with `phase_analysis`'s RT filter as `rt_valid`, and for walking the step the onset falls in, stride phase (`PHASE_METHOD`), % step, stance foot and its evidence. Excluded blocks are kept with the gate's behaviour and gait decisions, so an analysis filters rather than rebuilds. |
+| `step_table.py` | every step of every walking block in one long table, `step_table/steps.tsv`: duration, `valid_step` (at most `MAX_STEP_RATIO` x the median), stance foot, its evidence and ambiguity, stride number, and the lateral sway and vertical bob over the step. Joins `trials.tsv` on `(recording, step)`. |
+| `phase_analysis.py` | 40-bin stride binning, Fourier fit 0.1–10 cps, **weighted by bin occupancy** and run on **difficulty-adjusted** accuracy over the **answered** trials (primary), RT and the **timeout rate** (secondary) (§4b, §4e). **Primary per-participant test = confirmatory at 2 and 4 cps (Holm)**; the full-grid max-R² scan is exploratory. Significance by 1000× trial-level permutation with re-binning. |
+| `group_agnostic.py` | **THE CONFIRMATORY POPULATION TEST.** `S(f) = Σᵢ\|zᵢ\|²/sᵢ²` at 2 and 4 cps, Holm-corrected, **studentised** by each participant's own null so no one dominates the sum by being noisy (under H0 each contributes 1, so `S ≈ n`). Runs on the **primary** measure (accuracy) plus two secondary ones (reaction time, timeout rate); only accuracy carries a family-wise claim. Invariant to rotating any individual `zᵢ`, so it detects oscillation whatever phase each participant prefers — the point at Davidson's coherence of R = 0.33, where it reaches 91 % power at N = 12 × 1440 against a common-phase contrast's 15 %. Its null reuses `phase_analysis`'s own permutations, so it is exact by construction. |
 | `common_phase.py` | **THE COMMON-PHASE POPULATION TEST (secondary).** One-sample **Hotelling T²** on the per-participant (cos, sin) coefficients at 2 and 4 cps, Holm. Exact in small samples; measured FPR **0.05** in the idiosyncratic-phase case where the old GLMM Wald scored **0.60**; bit-identical to the statistic `davidson_power` simulated, so the pipeline now agrees with its own power analysis. Carries the locomotion-specificity test as a **paired** T² on walking − standing. Secondary by design: at R = 0.33 the vector mean cancels most of the effect. |
 | `glmm.py` | trial-level hierarchical GLMM (participant random intercept + random cos/sin slopes). **Descriptive only and now p-value-free** — amplitude, preferred phase, and the condition and difficulty breakdowns. Its variational Wald was removed rather than annotated (§4d); the same model with valid uncertainty, RT and a standing control is `bayes_glmm.py`. |
 | `bayes_glmm.py` | **Bayesian mixed models (secondary), NumPyro NUTS.** One model per measure — accuracy (Bernoulli-logit, answered trials) and log RT (Student-t) — over walking and standing trials: participant random intercept and walking slope, difficulty, and per condition the 2 and 4 cps cos/sin terms with a population mean (shared phase) and isotropic participant slopes (per-person modulation at their own phase). Standing trials carry a virtual stride phase (onset on a clock at the participant's walking stride time, seeded random start), which keeps the stimulus timing and reads no motion signal; a head-sway phase is not a clean null, because its zero-phase filter lets stimulus- and response-evoked head movement leak back to the onset. Reports amplitudes in hit-rate and RT units with 95 % HDIs, Savage–Dickey Bayes factors for the shared phase (2-D) and the per-person scale (boundary, reflected KDE), the walking-minus-standing contrasts and the walking main effect. Phase priors are anchored on Davidson's per-participant amplitude (N(0, 0.2) logit per component, τ ~ HalfNormal(0.2)). `--validate` checks the Bayes factors by simulation on the real design: how often BF10 > 3 appears with no effect, and how often a Davidson-sized (and a three times larger) effect at idiosyncratic phases is detected. |
 | `power.py` | per-participant detection power by Monte-Carlo over the same confirmatory test, disk-cached. |
 | `population.py` | grouped R² spectra, Bayesian prevalence de-biased with the measured sensitivity (Ince 2022) plus an identifiability guard, preferred-phase polar + Rayleigh, and the stride-duration controls (Supp 7/8). |
 | `clocktime_control.py` | is the oscillation locked to the stride or to any clock? Folds onsets onto a fixed temporal period (Hz) with the same machinery (Supp 5/6). |
-| `conditions.py` | standing vs walking hit rate / RT / by-difficulty. |
+| `conditions.py` | standing vs walking hit rate (answered trials) / RT / by-difficulty. |
 | `threshold_by_condition.py` | H5 — fits a fixed-slope Weibull to each condition's experiment trials, reads off the 75 % threshold and compares the two in a paired test. Slope and lapse come from `calibration_refit`'s per-condition joint fit (three tilt levels cannot identify a slope), so "walking shifts threshold, not slope" is tested rather than assumed. |
 | `calibration_transfer.py` | whether each calibrated threshold holds in the blocks run on it. Per calibration (participant × condition × visit, behaviour-gate blocks pooled), the blocks' own 75 % threshold (QUEST+ slope, lapse and guess fixed, profile 95 % CI) against the calibrated one, with a simulated sampling null at the blocks' tilts; counts the calibrations outside their null range (test against 5 %) and estimates the calibration error from the excess spread of log(block / calibrated). A fit at ceiling or chance is a bound only and stays out of the spread. Figure: accuracy at the calibrated tilt for every block, and calibrated vs block threshold. |
 | `descriptive.py` | exploratory dataset overview with Wilson CIs: behaviour, gait and tracking quality. No inferential stats. |
@@ -257,7 +262,7 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `simulate_participants.py` | N synthetic participants in the two-visit topology into a separate `bids_sim/`, run through the whole pipeline. Trials come from a Davidson-calibrated generative drift-diffusion model; the injected truth is written to `sim_truth.json`. |
 | `tests/test_pipeline.py` | inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |
 | `gabor_preview.py` | stimulus design aid (not part of the pipeline): renders the Gabor at true visual angle and sweeps each parameter. |
-| `run_pipeline.py` | orchestrates all 28 stages, prints the time each took, and lists the figures produced; `--no-cache` recomputes everything. |
+| `run_pipeline.py` | orchestrates all 30 stages, prints the time each took, and lists the figures produced; `--no-cache` recomputes everything. |
 | `stage_cache.py` | content-fingerprint cache that lets a step skip work whose inputs, code and outputs are unchanged (see Run). |
 | `davidson_power/` | effect size measured from Davidson's raw data + power simulations of this pipeline's own tests. See [its README](davidson_power/README.md). |
 
@@ -415,7 +420,7 @@ applied unconditionally) so every bin's `d'` is finite and the estimator stays c
 |---|---|
 | **20 bins**, not 40 | each bin must support *two* rates, so it needs ~2× the trials; at ~1440 pooled walking trials that is ~72/bin, ~36 per cell |
 | **pooled walking runs only** | a single ~180-trial run would put ~4 trials in each cell, and no correction rescues that |
-| **timeouts excluded** | a trial with no press is neither a hit nor a false alarm; there is no defensible cell for it. (Whether *timing out* is phase-dependent is a separate question, not tested here; see 4e.) |
+| **timeouts excluded** | a trial with no press is neither a hit nor a false alarm; there is no defensible cell for it. (Whether *timing out* is phase-dependent is the question of the timeout measure; see 4e.) |
 | null shuffles the **(stimulus, response) pair** | preserves every trial's outcome and both marginals, and moves only *when* each outcome occurred — the exact randomisation of "neither sensitivity nor criterion depends on phase" |
 | population test is **`group_agnostic.agnostic_test` itself** | reused verbatim, not reimplemented, so the two modules cannot drift apart |
 
@@ -468,10 +473,47 @@ pairing removes each participant's own offset.
 > phase-agnostic test's 91 %. A null here beside a positive `group_agnostic` result is the
 > **expected** pattern, not a contradiction, and the console output says so where it prints.
 
-### 4e. Two measures, and what is not analysed
+### 4e. Three measures, and what is not analysed
 
-The pipeline analyses **accuracy** (primary) and **reaction time** (secondary).
-**Response likelihood is not analysed.** Two independent reasons:
+The pipeline analyses **accuracy** (primary), **reaction time** (secondary) and the
+**timeout rate** (secondary).
+
+**Accuracy is the proportion correct of the answered trials.** A trial with no press inside
+the 2 s window is a missing response, not a wrong one, and is left out of numerator and
+denominator alike:
+
+- *The task is a two-alternative discrimination.* A wrong answer says the tilt was seen the
+  wrong way; no answer says nothing about which way it was seen. Scoring a timeout as 0
+  would also rank it below a forced guess, which is right half the time.
+- *The hypothesis is about perceptual sensitivity.* Timeouts mostly reflect lapses, slow
+  decisions or motor timing; folding them into accuracy would mix a second process into the
+  primary outcome.
+- *Condition contrasts stay clean.* Walking produces more timeouts than standing, so scoring
+  them wrong would build the timeout difference into every standing-versus-walking accuracy,
+  threshold and calibration-transfer comparison.
+- *One denominator everywhere.* The exclusion gate, the threshold fits, calibration
+  transfer, SDT, the Bayesian models, QC, the descriptive tables and `trial_table` all count
+  answered trials, so a block's accuracy is the same number wherever it is reported.
+
+Davidson et al. used a **detection** task, where a missing response *is* the outcome (not
+detected); in this discrimination task it is not, which is why the definitions differ.
+
+**Reaction time** is log10 RT of the correct, answered trials, without anticipations
+(< 150 ms) and robust-MAD outliers.
+
+**The timeout rate** asks whether answering at all depends on stride phase: the 0/1 "no
+response" outcome of all main trials at their **onset** phase, with the same 40-bin fit, 2
+and 4 cps Holm test and trial-level permutation as accuracy. Under H0 the trials are
+exchangeable, so the null is exact. It runs only where a participant has at least
+`phase_analysis.MIN_TIMEOUTS` = 10 timeouts (below that the series is nearly constant and the
+null collapses; such a participant is absent from the timeout population test, not counted
+as a null), and it is not difficulty-adjusted. It is secondary in `group_agnostic` and
+`common_phase`, with no family-wise claim. The exactness of the confirmatory test does not
+depend on the accuracy definition; what does is how much unrelated variance sits in the
+measure.
+
+**Response likelihood is not analysed.** It is a different quantity from the timeout rate,
+for two independent reasons:
 
 *Wrong quantity.* In Davidson's **detection** task "responded" meant "detected", which made
 the response histogram a sensitivity measure. This is a **forced-choice discrimination** —
@@ -482,10 +524,9 @@ carried over by name, not by meaning.
 **onset** phases compares two different distributions. A response-phase distribution is the
 onset distribution convolved with the RT spread, hence systematically smoother, so the
 observed R² sits below its own null by construction — conservative to the point of being
-inert, and outright degenerate (p ≡ 1) when the timeout rate approaches zero.
-
-Whether *timing out* is phase-dependent is a real question that stays untested here. It
-needs a test built for it.
+inert, and outright degenerate (p ≡ 1) when the timeout rate approaches zero. The timeout
+rate above takes outcome and null on the same onset phases, which is the test that question
+needs.
 
 **H3 (modulation largest at threshold) is not tested.** Not for want of theory: the
 0.85 / 0.10 / 0.05 difficulty weighting exists to serve H1, and it leaves ~144 EASY and ~72

@@ -225,9 +225,11 @@ def _recording_trials(rec) -> dict | None:
     with np.errstate(invalid="ignore", divide="ignore"):
         pct_step = np.where(inside & (span > 0), 100.0 * (onset - troughs[i_safe]) / span, np.nan)
 
-    acc = np.where(ev["response_correct"].to_numpy() == 1, 1.0, 0.0)
-    rt = ev["response_time"].to_numpy(float)
     responded = ev["response"].notna().to_numpy()
+    # accuracy over the answered trials: a timeout is NaN and stance_contrast drops it
+    acc = np.where(responded, np.where(ev["response_correct"].to_numpy() == 1, 1.0, 0.0),
+                   np.nan)
+    rt = ev["response_time"].to_numpy(float)
     logrt = np.full(acc.size, np.nan)
     good = responded & (acc == 1.0) & (rt > pa.RT_MIN_S) & np.isfinite(rt)
     if good.any():
@@ -417,7 +419,7 @@ def _figure(label: str, tr: dict, res: dict, out: Path):
 
     # (d) accuracy across the step, per foot
     for k in (0, 1):
-        m = np.asarray(tr["foot"]) == k
+        m = (np.asarray(tr["foot"]) == k) & np.isfinite(np.asarray(tr["acc"], float))
         cen, binned, sem = pa._bin(np.asarray(tr["pct_step"])[m], np.asarray(tr["acc"])[m],
                                    N_STEP_BINS, "mean")
         ax[3].plot(cen, binned, color=cols[k], lw=1.9, label=names[k])

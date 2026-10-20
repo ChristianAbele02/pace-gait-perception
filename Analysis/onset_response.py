@@ -294,7 +294,8 @@ def _figure(label, tr, res, out: Path):
     axL = fig.add_subplot(gs[0, 0])
     for y, tag, col in [(tr["acc"], "accuracy", S.TEAL), (tr["responded"], "P(respond)", S.ORANGE)]:
         v = _fit_vec(tr["onset_phase"], y, freq)
-        cen, binned, _ = pa._bin(tr["onset_phase"], y, 20, "mean")
+        fin = np.isfinite(y)                     # accuracy: answered trials only
+        cen, binned, _ = pa._bin(tr["onset_phase"][fin], y[fin], 20, "mean")
         axL.scatter(cen, binned, s=14, color=col, alpha=0.4)
         if v:
             base = float(np.nanmean(y))     # cos/sin are ~orthogonal to the constant

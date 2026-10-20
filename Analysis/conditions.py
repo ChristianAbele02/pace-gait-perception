@@ -7,6 +7,7 @@ Aggregates behaviour per (participant, condition) and plots:
   * c) overall reaction time, standing vs walking (paired);
   * d) reaction time by difficulty and condition.
 
+Hit rates are over answered trials: a timeout is a missing response, not a wrong one.
 If only one condition is present, the other side is left empty.
 
 Usage::
@@ -48,7 +49,8 @@ def _aggregate():
         ev = bids_io.load_events(rec)
         if ev.empty:
             continue
-        ev = ev[ev["is_training"] == 0].copy()
+        # hit rate over the answered trials: a timeout is a missing response
+        ev = ev[(ev["is_training"] == 0) & ev["response"].notna()].copy()
         ev["acc"] = (ev["response_correct"] == 1).astype(float)
         ev["rt"] = pd.to_numeric(ev["response_time"], errors="coerce")
         row = {"sub": rec.sub, "condition": rec.condition,

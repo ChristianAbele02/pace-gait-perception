@@ -2115,6 +2115,193 @@ def test_phase_locked_r2_rewards_the_more_accurate_phase():
 
 
 # ---------------------------------------------------------------------------
+# Accuracy over answered trials; timeouts as a measure of their own
+# ---------------------------------------------------------------------------
+def test_timeout_measure_recovers_a_phase_dependent_timeout_rate():
+    """Timeouts concentrated at one stride phase are detected at 2 cps by the timeout
+    measure; with too few timeouts the measure is not run at all."""
+    rng = np.random.default_rng(5)
+    n = 1500
+    phase = rng.uniform(0, 100, n)
+    p = 0.06 + 0.05 * np.cos(2 * np.pi * 2.0 * phase / 100.0)
+    timeout = (rng.random(n) < p).astype(float)
+    m = pa._timeout_measure(phase, timeout)
+    assert m is not None and m["p_2cps_holm"] < 0.05, "missed a 2-cps timeout modulation"
+    few = np.zeros(n); few[:pa.MIN_TIMEOUTS - 1] = 1.0
+    assert pa._timeout_measure(phase, few) is None
+
+
+def test_accuracy_leaves_timeouts_out_of_numerator_and_denominator():
+    """A block's accuracy counts answered trials only, in the phase analysis and in the
+    condition hit rate alike; the timeout outcome keeps every trial."""
+    import tempfile
+    import bids_io
+    import conditions
+    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
+    with tempfile.TemporaryDirectory() as td:
+        raw = Path(td) / "raw"; raw.mkdir()
+        bids = Path(td) / "bids"; bids.mkdir()
+        _raw_block(dur_s=200.0, seed=6).to_csv(raw / "p01-b1-t01_walking.csv", sep=";",
+                                               index=False)
+        try:
+            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
+            C.APPLY_BLOCK_RULE = False           # a short synthetic block, kept as it is
+            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
+            rec, = bids_io.find_recordings(bids, include_excluded=True)
+            ev = bids_io.load_events(rec)
+            ev = ev[ev["is_training"] == 0]
+            if ev["response"].notna().all():               # make sure there are timeouts
+                ev_path = rec.events_tsv
+                full = pd.read_csv(ev_path, sep="\t", na_values=["n/a"])
+                idx = full.index[full["is_training"] == 0][:12]
+                full.loc[idx, ["response", "response_correct", "response_time"]] = np.nan
+                full.to_csv(ev_path, sep="\t", index=False, na_rep="n/a")
+                ev = full[full["is_training"] == 0]
+            gait_mod.gait_recording(rec)
+            with np.load(bids_io.deriv_dir("gait", rec.sub, rec.ses)
+                         / f"{rec.label()}_gait.npz") as z:
+                g = {k: z[k] for k in z.files}
+            tp, _ = pa._trial_phases(rec, g["troughs"], g["step_foot"], g["t"],
+                                     pa.continuous_phase(g))
+            assert tp.loc[tp["timeout"] == 1, "acc"].isna().all()
+            assert tp.loc[tp["timeout"] == 0, "acc"].isin([0.0, 1.0]).all()
+            answered = ev[ev["response"].notna()]
+            want = float((answered["response_correct"] == 1).mean())
+            row = conditions._aggregate().iloc[0]
+            assert abs(row["hit_rate"] - want) < 1e-12
+        finally:
+            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
+
+
+# ---------------------------------------------------------------------------
+# Trial and step tables: the long tables written for analyses outside the pipeline
+# ---------------------------------------------------------------------------
+def test_trial_table_step_and_foot_follow_the_gait_arrays():
+    """Each onset gets the step it falls in, that step's foot and evidence, and the % step
+    gait.phase_at gives it; an onset in a gap, or before the first trough, gets none."""
+    import trial_table as tt
+    steps = np.arange(0, 20, 0.5)
+    troughs = np.concatenate([steps[steps < 8], steps[steps > 14]])
+    n_steps = troughs.size - 1
+    foot = np.arange(n_steps) % 2
+    margin = np.where(foot == 0, 1.0, -1.0) * np.linspace(0.1, 2.0, n_steps)
+    onset = np.array([-1.0, 0.25, 0.8, 4.1, 10.0, 16.2])
+    st = tt.stance_at(onset, troughs, foot, margin)
+    assert st["step"].tolist()[:4] == [-1, 0, 1, 8] and st["step"][4] == -1
+    assert st["foot"].tolist() == [-1, 0, 1, 0, -1, foot[st["step"][5]]]
+    assert np.isnan(st["margin"][[0, 4]]).all() and st["margin"][3] == margin[8]
+    ps, _ = gait_mod.phase_at(onset, troughs)
+    assert np.allclose(st["pct_step"], ps, equal_nan=True)
+    assert abs(st["pct_step"][1] - 50.0) < 1e-9
+
+
+def test_trial_table_rt_rule_matches_phase_analysis():
+    """rt_valid keeps exactly the trials phase_analysis's RT hygiene keeps: correct,
+    answered, no anticipations, no log-RT outliers, training trials never."""
+    import trial_table as tt
+    rng = np.random.default_rng(3)
+    n = 400
+    rt = np.exp(rng.normal(np.log(0.8), 0.25, n))
+    rt[:6] = [0.05, 0.1, 9.0, 12.0, 0.12, 15.0]          # anticipations and outliers
+    correct = (rng.random(n) < 0.75).astype(float)
+    correct[:6] = 1.0
+    timeout = rng.random(n) < 0.05
+    correct[timeout], rt[timeout] = np.nan, np.nan
+    training = np.zeros(n, bool); training[-5:] = True
+    ev = pd.DataFrame({"response": np.where(timeout, None, "left"), "rt": rt,
+                       "acc": np.where(correct == 1, 1.0, 0.0), "difficulty": "THR",
+                       "phase_target": rng.uniform(0, 100, n)})
+    ref = pa._clean_rt(ev[~training])[2]["n_rt_used"]
+    got = tt.rt_valid(rt, correct, ~training)
+    assert got.sum() == ref and not got[training].any() and not got[:6].any()
+
+
+def test_block_schedule_orders_blocks_and_measures_breaks():
+    """Blocks are numbered in recording order within each visit, and the gap is from the
+    end of the previous block (start + duration) to the start of this one."""
+    from types import SimpleNamespace
+    import bids_io
+    import trial_table as tt
+    meta = {"w1": ("1", "2026-10-06T10:20:00", "first", "600"),
+            "w2": ("1", "2026-10-06T10:00:00", "first", "600"),
+            "s1": ("1", "2026-10-06T10:40:00", "second", "700"),
+            "s2": ("2", "2026-10-13T09:00:00", "first", "700")}
+    recs = [SimpleNamespace(sub="sub-01", run=k[1], label=lambda k=k: k) for k in meta]
+    old = bids_io.scan_meta
+    try:
+        bids_io.scan_meta = lambda r, d=None: dict(zip(
+            ("visit", "acq_time", "condition_position", "duration_s"), meta[r.label()]))
+        s = tt.block_schedule(recs)
+    finally:
+        bids_io.scan_meta = old
+    assert [s[k]["block_in_visit"] for k in ("w2", "w1", "s1", "s2")] == [1, 2, 3, 1]
+    assert s["w1"]["gap_before_block_s"] == 600.0 and s["s1"]["gap_before_block_s"] == 600.0
+    assert np.isnan(s["w2"]["gap_before_block_s"]) and np.isnan(s["s2"]["gap_before_block_s"])
+    assert s["s1"]["offset_in_visit_s"] == 2400.0
+
+
+def test_step_table_recovers_steps_feet_and_sway():
+    """On a clean synthetic walk every step is one half stride, the feet alternate, the
+    sway sign follows the foot (foot A = positive sway) and the bob spans the full
+    vertical swing; a missed trough leaves one long step flagged invalid, with no sway."""
+    import step_table as stt
+    t, vertical, lateral, troughs = _synth_gait()
+    troughs = np.delete(troughs, 40)                       # one missed trough
+    lab = gait_mod.label_steps(t, lateral, troughs)
+    df = stt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"], lab["step_margin"])
+    assert len(df) == troughs.size - 1
+    bad = df[df["valid_step"] == 0]
+    assert bad["step"].tolist() == [40] and bad["lateral_sway_m"].isna().all()
+    ok = df[(df["valid_step"] == 1) & df["step"].between(3, len(df) - 3)]
+    assert np.allclose(ok["duration_s"], 1 / (2 * 0.9), atol=0.02)
+    assert set(df["stance_foot"]) == {"foot A", "foot B"}
+    sign = np.sign(ok["lateral_sway_m"]).map({1.0: "foot A", -1.0: "foot B"})
+    assert (sign == ok["stance_foot"]).mean() > 0.95
+    assert np.allclose(ok["vertical_range_m"], 2.0, atol=0.05)
+    assert df["stride"].diff().dropna().isin([0, 1]).all()
+    untrusted = stt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"],
+                                lab["step_margin"], trust_feet=False)
+    assert untrusted["stance_foot"].isna().all() and untrusted["stride"].isna().all()
+
+
+def test_trial_and_step_tables_cover_every_block_and_join():
+    """End to end on the gate dataset: every logged trial is a row, excluded blocks stay in
+    with their gate decision, and walking trials join their step in the step table."""
+    import tempfile
+    import bids_io
+    import step_table as stt
+    import trial_table as tt
+    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
+    rng = np.random.default_rng(2)
+    with tempfile.TemporaryDirectory() as td:
+        raw, bids = _gate_dataset(td, rng)
+        try:
+            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
+            C.APPLY_BLOCK_RULE = True
+            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
+            trials = tt.main()
+            steps = stt.main()
+            recs = bids_io.find_recordings(bids, include_excluded=True)
+            assert len(trials) == sum(len(bids_io.load_events(r)) for r in recs)
+            on_disk = pd.read_csv(C.DERIV_DIR / "trial_table" / tt.TABLE_FILE, sep="\t",
+                                  na_values=["n/a"])
+            assert list(on_disk.columns) == list(tt.COLUMNS) and len(on_disk) == len(trials)
+            by_run = trials.groupby("run")["behaviour"].first()
+            assert by_run.to_dict() == {1: "include", 2: "exclude", 3: "exclude"}
+            assert (trials["gait"] == "include").all()
+            assert trials.loc[trials["timeout"] == 1, "correct"].isna().all()
+            assert steps["recording"].nunique() == 3
+            walk = trials[trials["step"].notna()]
+            j = walk.merge(steps, on=["recording", "step"], suffixes=("", "_step"))
+            assert len(j) == len(walk) > 0
+            assert (j["stance_foot"].fillna("-") == j["stance_foot_step"].fillna("-")).all()
+            assert ((j["onset_s"] >= j["t_start_s"])
+                    & (j["onset_s"] < j["t_start_s"] + j["duration_s"])).all()
+        finally:
+            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
+
+
+# ---------------------------------------------------------------------------
 # script entry point (without pytest)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

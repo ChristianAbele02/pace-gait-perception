@@ -75,6 +75,7 @@ def _walking_trials(rec) -> pd.DataFrame | None:
     if tp is None:
         return None
     ev, _ = tp
+    ev = ev[ev["acc"].notna()]                   # accuracy is over answered trials
     rt = ev["rt"].to_numpy(float)
     acc = ev["acc"].to_numpy(float)
     logrt = np.where((ev["response"].notna()) & (acc == 1.0) & (rt > pa.RT_MIN_S) & np.isfinite(rt),

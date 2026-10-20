@@ -235,8 +235,12 @@ HEAD_PITCH_SIGN_VERIFIED = False
 #
 # Accuracy is the single pre-specified primary outcome: the power analysis is based on it
 # (``davidson_power/power.py``), Davidson et al. (2024) report it as the main effect, and
-# its scale is comparable across participants without normalisation. Reaction time is
+# its scale is comparable across participants without normalisation. It is computed over
+# the answered trials: a timeout is a missing response, not a wrong one. Reaction time is
 # secondary, without family-wise error control.
+#
+# Timeouts are a secondary measure too: P(no response) over all trials at their onset
+# phase, with the same binned fit and trial-level permutation as accuracy.
 #
 # Response likelihood ("response_counts") was removed. In Davidson's detection task a
 # response meant a detection, so the count histogram measured sensitivity. Here every trial
@@ -244,9 +248,10 @@ HEAD_PITCH_SIGN_VERIFIED = False
 # observed histogram binned response phases (onset + RT) while the null sampled onset
 # phases; the response-phase distribution is the onset distribution smoothed by RT spread.
 # The test was therefore overly conservative and degenerate (p = 1) when timeouts were rare.
-# Whether timeouts depend on phase would need its own test.
+# The timeouts measure asks the same question correctly: outcome and null both use onset
+# phases, and it runs only for participants with at least ``phase_analysis.MIN_TIMEOUTS``.
 PRIMARY_MEASURE = "accuracy"
-SECONDARY_MEASURES = ("reaction_time",)
+SECONDARY_MEASURES = ("reaction_time", "timeouts")
 
 # --- Estimator choices for the binned Fourier fit --------------------------
 # Both on by default. Each only reduces variance and cannot create an effect, since the
