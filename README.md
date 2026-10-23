@@ -474,7 +474,7 @@ a 1.10× threshold ratio. The split also buys robustness to attrition: N = 12 st
 **[Analysis/README.md](Analysis/README.md)** for every module.
 
 ```
-raw logs → bidsify → BIDS dataset → calibration → exclusion gate → qc / gait
+raw logs → bidsify → BIDS dataset → calibration → presentation rule + exclusion gate → qc / gait
 → phase_analysis (per participant) → group_agnostic (CONFIRMATORY population test)
 → common_phase / glmm / bayes_glmm / population (secondary)
 → clocktime_control (stride vs clock control) → conditions / threshold_by_condition
@@ -521,7 +521,12 @@ read up to the break, and tracking gaps get no stride phase. One exclusion gate
 (`derivatives/qc/gate.tsv`, built right after calibration) is read by every stage: blocks in
 `config.EXCLUDED_RECORDINGS`, plus, for the analyses of the responses only, blocks whose
 answered accuracy is not above chance, is significantly below chance, or that left ≥ 25 % of
-trials unanswered. Every stage prints its N and logs it to `qc/gate_ledger.tsv`.
+trials unanswered. Every stage prints its N and logs it to `qc/gate_ledger.tsv`. Below the
+block level, a trial is dropped from every trial-based analysis when the head tracking,
+which drives the CAVE perspective, froze, jumped or dropped out from 0.3 s before its onset
+to 0.1 s after the stimulus went off (`presentation.py`); the gate's criteria use the
+remaining trials. `python -m Analysis.presentation_comparison` reruns the pipeline without
+this rule and writes the comparison to `derivatives/sensitivity/presentation_rule/`.
 
 ---
 

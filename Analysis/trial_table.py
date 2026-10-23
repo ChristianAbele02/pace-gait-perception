@@ -16,7 +16,8 @@ Each row carries:
   time. ``timeout`` marks an unanswered trial, whose ``correct`` is n/a (accuracy is over
   answered trials). ``time_in_visit_s`` puts every onset on one clock per visit.
 * ``rt_valid``: the RT filter of ``phase_analysis`` (correct, answered, slower than
-  ``RT_MIN_S``, within ``RT_MAD_K`` robust SDs of the block's log RT).
+  ``RT_MIN_S``, within ``RT_MAD_K`` robust SDs of the block's log RT), over the trials
+  with a valid presentation.
 * Walking only: the step the onset falls in (``step``, joins ``step_table/steps.tsv``),
   stride phase by ``config.PHASE_METHOD``, phase within the step, and the stance foot
   with its evidence. Onsets in a data gap, or in a step too long to be one, get n/a, as in
@@ -24,9 +25,12 @@ Each row carries:
   set, and n/a in blocks whose foot labels gait.py rated unreliable.
 * The exclusion gate's behaviour and gait decisions with the reason, and the verdict of
   the calibration the block ran on.
+* Presentation validity: ``presentation_valid`` = 0 marks a trial shown while the head
+  tracking froze, jumped or dropped out (``presentation.py``), and ``presentation_flag``
+  names the artefact. The pipeline drops these trials from every trial-based analysis.
 
-Excluded blocks and training trials are included and flagged, so an analysis filters
-rather than rebuilds.
+Excluded blocks, training trials and trials with an invalid presentation are included
+and flagged, so an analysis filters rather than rebuilds.
 
 Usage::
 
@@ -46,12 +50,14 @@ try:
     from . import config as C
     from . import gait as gait_mod
     from . import phase_analysis as pa
+    from . import presentation
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bids_io
     import config as C
     import gait as gait_mod
     import phase_analysis as pa
+    import presentation
 
 TABLE_FILE = "trials.tsv"
 UNTRUSTED_FOOT = ("unreliable", "unusable")   # gait verdicts whose foot labels are not used
@@ -95,7 +101,16 @@ COLUMNS = {
              "Units": "s"},
     "rt_valid": {"Description": "1 = the reaction time passes phase_analysis's RT rule: "
                                 "answered correctly, slower than RT_MIN_S, and within "
-                                "RT_MAD_K robust SDs of the block's log10 RT (main trials)."},
+                                "RT_MAD_K robust SDs of the block's log10 RT (main trials "
+                                "with a valid presentation)."},
+    "presentation_valid": {"Description": "1 = no head-tracking artefact from "
+                                          "PRESENTATION_PRE_S before onset to "
+                                          "PRESENTATION_POST_S after the Gabor's offset; "
+                                          "0 = flagged, left out of every trial-based "
+                                          "analysis (presentation.py)."},
+    "presentation_flag": {"Description": "Artefact kinds in the presentation window "
+                                         "(spike, jump, freeze, gap), ';'-joined; '-' if "
+                                         "none."},
     "step": {"Description": "Walking: step (trough-to-trough interval) the onset falls in, "
                             "1 = first; joins step_table/steps.tsv on (recording, step). "
                             "n/a in a data gap or a step too long to be one."},
@@ -237,7 +252,7 @@ def _gait_arrays(rec, gait_ok: bool) -> tuple[dict | None, str]:
 
 def block_trials(rec, sched: dict, gate_row: dict, gait_ok: bool) -> pd.DataFrame | None:
     """Every trial of one block as rows of the table."""
-    ev = bids_io.load_events(rec)
+    ev = bids_io.load_events(rec, presentation_rule=False)     # every trial, flag as a column
     if ev.empty:
         return None
     n = len(ev)
@@ -246,6 +261,8 @@ def block_trials(rec, sched: dict, gate_row: dict, gait_ok: bool) -> pd.DataFram
     correct = ev["response_correct"].to_numpy(float)
     rt = ev["response_time"].to_numpy(float)
     timeout = ev["response"].isna().to_numpy()
+    pflags = presentation.trial_flags(rec, ev)
+    pvalid = pflags["presentation_valid"].to_numpy(int)
 
     step = np.full(n, -1)
     stride_pct, step_pct, margin = (np.full(n, np.nan) for _ in range(3))
@@ -283,7 +300,9 @@ def block_trials(rec, sched: dict, gate_row: dict, gait_ok: bool) -> pd.DataFram
         "response": ev["response"].to_numpy(), "timeout": timeout.astype(int),
         "correct": pd.array(np.where(timeout, np.nan, correct), dtype="Int64"),
         "rt_s": np.round(rt, 4),
-        "rt_valid": rt_valid(rt, correct, training == 0).astype(int),
+        "rt_valid": rt_valid(rt, correct, (training == 0) & (pvalid == 1)).astype(int),
+        "presentation_valid": pvalid,
+        "presentation_flag": pflags["presentation_flag"].to_numpy(),
         "step": pd.array(np.where(step >= 0, step + 1, np.nan), dtype="Int64"),
         "stride_phase_pct": np.round(stride_pct, 2), "step_phase_pct": np.round(step_pct, 2),
         "stance_foot": foot_txt, "foot_margin": np.round(margin, 3),

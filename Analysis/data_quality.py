@@ -17,8 +17,10 @@ from a fixed set, so the counts compare across participants:
 A block failing several criteria gets the most specific as its label (manual, then
 reversal, timeouts, chance) and all of them in ``all_labels``. Trial counts are main
 trials; the training trials that open every block are never analysed and are counted
-apart. Kept trials are the answered main trials of the blocks the behaviour scope keeps;
-timeouts in those blocks are counted separately.
+apart. Kept trials are the answered main trials of the blocks the behaviour scope keeps,
+whose presentation was valid; timeouts in those blocks, and their trials removed by the
+presentation rule (``presentation.py``, label ``Presentation artefact``), are counted
+separately.
 
 Outputs (under ``derivatives/summary/``):
   * ``data_quality.md`` — the overview tables, with the label legend.
@@ -70,6 +72,10 @@ LEGEND = [
      "only, not the blocks run on it"),
     ("Training trial", "trial", "the practice trials opening every block; never analysed"),
     ("Timeout", "trial", "no response in the response window; left out of accuracy"),
+    ("Presentation artefact", "trial",
+     "the head tracking froze, jumped or dropped out between 0.3 s before onset and 0.1 s "
+     "after the Gabor went off, so the view may have moved while it was shown "
+     "(presentation.py); left out of every trial-based analysis"),
     ("Not recorded", "planned block", "a planned run with no recording"),
     ("Visit pending", "planned block", "a planned run of a visit not yet recorded"),
 ]
@@ -113,13 +119,15 @@ def unit_rows(gate: pd.DataFrame, training: dict[str, int] | None = None,
         excluded = g["behaviour"] == "exclude"
         n_test, n_answered = _int(g.get("n_trials")), _int(g.get("n_answered"))
         is_block = g["unit"] == "block"
+        n_flag = _int(g.get("n_presentation_flagged")) if is_block else 0
         rows.append({
             "unit": g["unit"], "status": "recorded", "recording": g["recording"],
             "participant": g["participant"], "condition": g["condition"],
             "visit": _int(g.get("visit")) or "n/a",
             "run": int(run.group(1)) if run else "n/a",
             "n_training": training.get(g["recording"], "n/a") if is_block else "n/a",
-            "n_trials": n_test,
+            "n_trials": n_test + n_flag,
+            "n_presentation_flagged": n_flag,
             "n_answered": n_answered if is_block else n_test,
             "n_timeouts": n_test - n_answered if is_block else 0,
             "n_correct": _int(g.get("n_correct")),
@@ -142,7 +150,8 @@ def unit_rows(gate: pd.DataFrame, training: dict[str, int] | None = None,
                     rows.append({
                         "unit": "block", "status": "missing", "recording": "n/a",
                         "participant": sub, "condition": cond, "visit": visit, "run": run,
-                        "n_training": "n/a", "n_trials": 0, "n_answered": 0,
+                        "n_training": "n/a", "n_trials": 0, "n_presentation_flagged": 0,
+                        "n_answered": 0,
                         "n_timeouts": 0, "n_correct": 0, "behaviour": "n/a", "gait": "n/a",
                         "label": lab, "all_labels": lab})
     out = pd.DataFrame(rows)
@@ -171,6 +180,7 @@ def _summarise(b: pd.DataFrame, cal: pd.DataFrame) -> dict:
         "trials_recorded": int(rec["n_trials"].sum()),
         "trials_kept": int(answered),
         "trials_excluded_with_block": int(excl["n_trials"].sum()),
+        "presentation_artefacts_in_kept_blocks": int(kept["n_presentation_flagged"].sum()),
         "timeouts_in_kept_blocks": int(kept["n_timeouts"].sum()),
         "accuracy_kept": round(kept["n_correct"].sum() / answered, 3) if answered else "n/a",
         "calibrations_recorded": len(cal),
@@ -218,6 +228,7 @@ def markdown(units: pd.DataFrame, summary: pd.DataFrame, gate_id: str = "") -> s
         "blocks_recorded": "Blocks", "blocks_kept": "Kept", "blocks_excluded": "Excl.",
         "trials_recorded": "Trials", "trials_kept": "Kept (answered)",
         "trials_excluded_with_block": "Excl. with block",
+        "presentation_artefacts_in_kept_blocks": "Presentation artefacts (kept blocks)",
         "timeouts_in_kept_blocks": "Timeouts (kept blocks)",
         "accuracy_kept": "Accuracy (kept)", "block_exclusions": "Exclusion labels",
     }
@@ -237,10 +248,13 @@ def markdown(units: pd.DataFrame, summary: pd.DataFrame, gate_id: str = "") -> s
           f"(`derivatives/qc/gate.tsv`{', gate ' + gate_id if gate_id else ''}) on every "
           "pipeline run; do not edit by hand. Counts are for the behaviour scope (the "
           "analyses of the responses). Trials are main trials; kept trials are the "
-          "answered trials of kept blocks.", "",
+          "answered trials of kept blocks whose presentation was valid (no head-tracking "
+          "artefact around the stimulus; `qc/presentation_flags.tsv`).", "",
           f"**Overall:** {tot['blocks_kept']}/{tot['blocks_recorded']} blocks and "
           f"{tot['trials_kept']}/{tot['trials_recorded']} trials kept, accuracy "
           f"{tot['accuracy_kept']:.1%} on the kept trials; "
+          f"{tot['presentation_artefacts_in_kept_blocks']} trials of kept blocks removed by "
+          "the presentation rule; "
           f"{tot['calibrations_kept']}/{tot['calibrations_recorded']} calibrations kept; "
           f"{int(n_train)} training trials not analysed. The gait analyses keep "
           f"{walk_gait}/{len(walk)} walking blocks: only manual exclusions apply there.", "",
@@ -283,7 +297,7 @@ def markdown(units: pd.DataFrame, summary: pd.DataFrame, gate_id: str = "") -> s
 def _training_counts() -> dict[str, int]:
     out = {}
     for rec in bids_io.find_recordings(include_excluded=True, apply_block_rule=False):
-        ev = bids_io.load_events(rec)
+        ev = bids_io.load_events(rec, presentation_rule=False)
         if not ev.empty and "is_training" in ev:
             out[rec.label()] = int((pd.to_numeric(ev["is_training"], errors="coerce") == 1).sum())
     return out

@@ -4,6 +4,7 @@ Paths are relative to the repository root, so scripts work from any directory.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -77,6 +78,18 @@ SETUP_CORRECTIONS: dict[tuple[str, int], dict] = {}
 APPLY_BLOCK_RULE = True
 BLOCK_RULE_ALPHA = 0.05
 BLOCK_RULE_MAX_TIMEOUT_FRACTION = 0.25    # exclude blocks with >= 25 % unanswered
+
+# Presentation rule (presentation.py): a trial is dropped from every trial-based analysis
+# when a head-tracking artefact overlaps its presentation window. The tracked head drives
+# the CAVE perspective, so a frozen or jumping pose moves the view while the Gabor is shown.
+# Window = [onset - PRE, onset + measured on-screen time + POST]. The values were fixed
+# before data collection was complete and must not be tuned to results.
+# ILL_PRESENTATION_RULE=0 turns the rule off (presentation_comparison.py uses this).
+APPLY_PRESENTATION_RULE = os.environ.get("ILL_PRESENTATION_RULE", "1") not in ("0", "false", "no")
+PRESENTATION_PRE_S = 0.30         # lead: the render eye is smoothed at 1.8 Hz (~0.3 s to settle)
+PRESENTATION_POST_S = 0.10        # margin after the Gabor's measured offset
+PRESENTATION_STALE_MIN_S = 0.10   # a frozen pose this long counts; single repeats do not
+PRESENTATION_GAP_S = 0.25         # no head sample for longer than this counts (gait.GAP_S)
 
 # None: each raw pNN maps to sub-NN. An integer puts all input under one subject.
 MERGE_TO_SUBJECT: int | None = None

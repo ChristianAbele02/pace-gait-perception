@@ -111,6 +111,9 @@ def _condition_for(sub: str, ses: str, bids_dir: Path) -> str:
 #   behaviour - analyses of responses (accuracy, RT, thresholds, SDT, DDM...): manual list
 #               plus the automatic rule while config.APPLY_BLOCK_RULE is on.
 #   gait      - analyses of walking only: manual list only.
+# Below block level, load_events() drops the trials the presentation rule flags
+# (presentation.py, derivatives/qc/presentation_flags.tsv) in both scopes. The block
+# rule is judged on the remaining trials.
 GATE_FILE = "gate.tsv"
 GATE_LEDGER_FILE = "gate_ledger.tsv"
 SCOPES = ("behaviour", "gait")
@@ -123,11 +126,18 @@ def _qc_dir(bids_dir: Path | None = None) -> Path:
 def gate_settings() -> dict:
     """Config values the gate depends on; a change makes the gate stale."""
     # Bump RuleVersion when block_rules changes its decisions.
-    return {"RuleVersion": 4,
+    try:
+        from . import presentation
+    except ImportError:
+        import presentation
+    return {"RuleVersion": 5,
             "RuleActive": bool(getattr(C, "APPLY_BLOCK_RULE", False)),
             "Alpha": float(getattr(C, "BLOCK_RULE_ALPHA", 0.05)),
             "MaxTimeoutFraction": float(getattr(C, "BLOCK_RULE_MAX_TIMEOUT_FRACTION", 0.25)),
-            "Manual": dict(sorted(getattr(C, "EXCLUDED_RECORDINGS", {}).items()))}
+            "Manual": dict(sorted(getattr(C, "EXCLUDED_RECORDINGS", {}).items())),
+            "PresentationRule": {
+                "Active": bool(getattr(C, "APPLY_PRESENTATION_RULE", False)),
+                **presentation.settings()}}
 
 
 def calibration_label(path: Path) -> str:
@@ -139,7 +149,8 @@ def gate_staleness(bids_dir: Path | None = None) -> str | None:
     """Reason the gate file is out of date, or None if current.
 
     Stale if missing, if blocks or calibrations were added or removed, if its config
-    changed, or if an input (events, calibration tables, calibration verdicts) is newer.
+    changed, or if an input (events, calibration tables, calibration verdicts, the
+    presentation flags) is newer.
     """
     f = _qc_dir(bids_dir) / GATE_FILE
     meta = f.with_suffix(".json")
@@ -159,7 +170,8 @@ def gate_staleness(bids_dir: Path | None = None) -> str | None:
         return "exclusion settings in config.py changed"
     deriv = Path(bids_dir or C.BIDS_DIR) / "derivatives" / "calibration"
     inputs = ([r.events_tsv for r in recs] + list(cals)
-              + list(deriv.glob("sub-*/*/*_calibration_qc.json")))
+              + list(deriv.glob("sub-*/*/*_calibration_qc.json"))
+              + [_qc_dir(bids_dir) / "presentation_flags.tsv"])
     newest = max((q.stat().st_mtime for q in inputs if q.exists()), default=0.0)
     if newest > f.stat().st_mtime:
         return "inputs changed since it was built"
@@ -456,14 +468,29 @@ def load_motion(rec: Recording) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     return motion, channels, meta
 
 
-def load_events(rec: Recording) -> pd.DataFrame:
+def load_events(rec: Recording, presentation_rule: bool | None = None) -> pd.DataFrame:
     """Trial table for ``rec``, or an empty frame if it has none.
 
     Onsets are seconds from recording start on the clock of ``motion_df["t"]``.
+
+    With the presentation rule on (``config.APPLY_PRESENTATION_RULE``, or the
+    ``presentation_rule`` argument), trials whose presentation window overlaps a
+    head-tracking artefact are dropped and the index is reset (``presentation.py``).
+    Every trial-based analysis reads events this way. QC, the gait sheets and the trial
+    table pass ``presentation_rule=False`` to see every trial.
     """
     if not rec.events_tsv.exists():
         return pd.DataFrame()
-    return pd.read_csv(rec.events_tsv, sep="\t", na_values=["n/a"])
+    ev = pd.read_csv(rec.events_tsv, sep="\t", na_values=["n/a"])
+    if presentation_rule is None:
+        presentation_rule = bool(getattr(C, "APPLY_PRESENTATION_RULE", False))
+    if presentation_rule and not ev.empty:
+        try:
+            from . import presentation
+        except ImportError:
+            import presentation
+        ev = ev[presentation.valid_mask(rec, ev)].reset_index(drop=True)
+    return ev
 
 
 # One folder per stage under derivatives/, grouped by role. Each is a BIDS-derivative
@@ -473,7 +500,9 @@ DERIVATIVE_GROUPS = {
     "Preprocessing and quality": {
         "qc": "One QC sheet per block: head position raw vs cleaned with the size of every "
               "correction, belt speed, target onsets and accuracy by level; frame timing, "
-              "tracking and vigilance in the JSON (qc.py).",
+              "tracking and vigilance in the JSON (qc.py). Also the exclusion gate, the "
+              "N per stage, and the presentation flags of every trial (block_rules.py, "
+              "presentation.py).",
         "calibration": "QUEST+ calibration per condition and visit: staircase figures, "
                        "reliability checks, and the offline slope/lapse refit "
                        "(calibration.py, calibration_refit.py).",
@@ -534,6 +563,9 @@ DERIVATIVE_GROUPS = {
     "Planning and summary": {
         "planning": "Power and prevalence planning simulations (prevalence_planning.py).",
         "summary": "Dataset summary tables, block inventory and the HTML report (report.py).",
+        "sensitivity": "Sensitivity analyses run on demand, not by the pipeline: the "
+                       "pipeline with and without the presentation rule, compared "
+                       "(presentation_comparison.py).",
     },
 }
 DERIVATIVE_FOLDERS = {k: v for group in DERIVATIVE_GROUPS.values() for k, v in group.items()}

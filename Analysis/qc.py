@@ -352,7 +352,7 @@ def qc_recording(rec) -> dict:
     Cleaning is measured, not applied; gait.py does the repair.
     """
     motion, channels, meta = bids_io.load_motion(rec)
-    events = bids_io.load_events(rec)
+    events = bids_io.load_events(rec, presentation_rule=False)   # QC covers every trial
     t = motion["t"].to_numpy()
     valid = _valid_pos_mask(motion)
 

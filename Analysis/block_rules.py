@@ -27,6 +27,11 @@ Automatic rule:
    residualisation absorbs. If a condition was recalibrated within a visit, the latest
    calibration applies.
 
+All block criteria use only the trials the presentation rule keeps (``presentation.py``).
+A trial shown while the head tracking froze, jumped or dropped out says nothing about the
+participant, so it counts neither for nor against the block. ``n_trials`` counts the valid
+main trials, ``n_presentation_flagged`` the main trials the rule removed.
+
 Easy-trial accuracy is not a criterion: with ~17 easy trials per block, a binomial test
 fails an engaged participant 10-40 % of the time. It remains a QC warning (``qc.py``).
 
@@ -107,9 +112,11 @@ def calibration_verdict(sub: str, condition: str, visit: int | str | None = None
 def evaluate(rec, alpha: float | None = None) -> dict:
     """Rule verdict for one block, with the underlying numbers."""
     alpha = C.BLOCK_RULE_ALPHA if alpha is None else alpha
+    raw = bids_io.load_events(rec, presentation_rule=False)
     ev = bids_io.load_events(rec)
     main = ev[ev["is_training"] == 0] if not ev.empty else ev
     n_main = int(len(main))
+    n_flagged = (int((raw["is_training"] == 0).sum()) - n_main) if not raw.empty else 0
     rc = pd.to_numeric(main["response_correct"], errors="coerce") if n_main else pd.Series()
     n = int(rc.isin([0, 1]).sum())                      # answered trials only
     k = int((rc == 1).sum())
@@ -133,7 +140,8 @@ def evaluate(rec, alpha: float | None = None) -> dict:
     return {
         "recording": rec.label(), "participant": rec.sub, "condition": rec.condition,
         "visit": visit if visit is not None else "n/a",
-        "n_trials": n_main, "n_answered": n, "n_correct": k,
+        "n_trials": n_main, "n_presentation_flagged": n_flagged,
+        "n_answered": n, "n_correct": k,
         "accuracy": round(k / n, 3) if n else "n/a",
         "p_above_chance": round(float(p_above), 6) if n else "n/a",
         "p_below_chance": round(float(p_below), 6) if n else "n/a",
@@ -227,8 +235,15 @@ def main(quiet: bool = False) -> list[dict]:
             "calibration": "an UNRELIABLE calibration is left out of the pooled "
                            "calibration refit; its blocks are judged by chance and "
                            "reversal alone (calibration_verdict records it)",
+            "presentation": "every block criterion is judged on the main trials the "
+                            "presentation rule keeps (presentation.py); trials shown "
+                            "during a head-tracking artefact are not counted",
         },
         "unit": {"Description": "block (a motion recording) or calibration (a _beh.tsv)."},
+        "n_trials": {"Description": "Blocks: main trials with a valid presentation. "
+                                    "Calibrations: trials scored (warm-up and catch out)."},
+        "n_presentation_flagged": {"Description": "Main trials the presentation rule "
+                                                  "removed (0 while it is off)."},
         "rule": {"Description": "Which criteria failed, with the numbers; 'pass' if none. "
                                 "Recorded whether or not the rule is active."},
         "rule_exclude": {"Description": "True if the automatic rule fails this unit."},

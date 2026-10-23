@@ -985,7 +985,7 @@ def gait_recording(rec) -> GaitResult:
     gait sheet.
     """
     res = extract_gait(rec)
-    events = bids_io.load_events(rec)
+    events = bids_io.load_events(rec, presentation_rule=False)   # the sheet shows every onset
     out_dir = bids_io.deriv_dir("gait", rec.sub, rec.ses)
     (out_dir / f"{rec.label()}_gait.json").write_text(json.dumps(res.summary(), indent=2),
                                                       encoding="utf-8")

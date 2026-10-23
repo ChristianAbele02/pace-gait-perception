@@ -21,7 +21,7 @@ try:
                    gam_phase, ddm_phase, prevalence_planning, stance_foot, sdt_phase,
                    common_phase, head_stability, gait_dynamics, gait_prc,
                    gait_phase_methods, calibration_transfer, bayes_glmm, bids_io,
-                   trial_table, step_table, stage_cache, config as C)
+                   trial_table, step_table, stage_cache, presentation, config as C)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bidsify, calibration, calibration_refit, qc, block_rules, gait, phase_analysis
@@ -31,7 +31,7 @@ except ImportError:
     import common_phase
     import head_stability, gait_dynamics, gait_prc, gait_phase_methods
     import calibration_transfer, bayes_glmm, stage_cache
-    import trial_table, step_table
+    import trial_table, step_table, presentation
     import bids_io
     import config as C
 
@@ -117,10 +117,13 @@ def main() -> None:
         print("\n########## 2. Calibration figures ##########")
         calibration.main()
     if "gate" in steps:
-        # Built right after the calibration verdicts it depends on. Later stages read it and
-        # print their N; bids_io.load_gate rebuilds it if stale (e.g. with --only).
-        _lap('2b. Exclusion gate (derivatives/qc/gate.tsv)')
-        print("\n########## 2b. Exclusion gate (derivatives/qc/gate.tsv) ##########")
+        # Built right after the calibration verdicts it depends on. The presentation flags
+        # come first, since the block rule is judged on the trials they keep. Later stages
+        # read both and print their N; bids_io.load_gate and presentation.trial_flags
+        # rebuild them if stale (e.g. with --only).
+        _lap('2b. Presentation rule + exclusion gate (derivatives/qc/)')
+        print("\n########## 2b. Presentation rule + exclusion gate (derivatives/qc/) ##########")
+        presentation.main()
         block_rules.main()
     if "calib_refit" in steps:
         _lap('2c. Calibration slope/lapse refit (b8)')

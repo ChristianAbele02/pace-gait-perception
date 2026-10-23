@@ -28,7 +28,9 @@ data/derivatives/                                README.md indexes the folders b
   ├── onset_response/ gam_phase/ ddm_phase/ sdt/ stance_foot/        exploratory: responses
   ├── head_stability/ gait_dynamics/ gait_prc/ gait_phase_methods/   exploratory: walking
   ├── planning/ summary/                           planning; report.html, inventory, provenance
+  ├── sensitivity/presentation_rule/               the pipeline with vs without the presentation rule (on demand)
   └── qc/  gate.tsv (exclusion gate)  gate_ledger.tsv (N per stage)
+           presentation_flags.tsv (trials shown during a head-tracking artefact)
 
 <stage>/sub-XX/ses-YY/            data: *_<stage>.json / .npz, named after the recording
 <stage>/sub-XX/ses-YY/figures/    one sheet per block: <recording>_<stage>.png
@@ -109,6 +111,10 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   Easy-trial accuracy is deliberately not a criterion. At ~17 easy trials a binomial test on
   them wrongly fails an engaged participant 10–40% of the time, so it stays a QC warning.
 
+  Criteria 1–3 use only the trials the presentation rule (next item) keeps. `gate.tsv` gives
+  each block's valid main trials as `n_trials` and the trials the rule removed as
+  `n_presentation_flagged`.
+
   The gate has two **scopes**, because the rule judges the *responses*:
   - `behaviour` — every analysis of the responses (stride-phase tests, GLMM, population,
     clock-time, conditions, H5 thresholds, descriptive, onset/response, GAM, DDM, stance
@@ -137,6 +143,36 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   old result cannot reappear in the report. `summary/exclusions.tsv` lists each block's
   decision for both scopes, with the non-blocking warnings (poor head data, side bias, low
   L/R alternation, unreliable foot labels).
+- **Trials shown during a head-tracking artefact** (`presentation.py`, the presentation
+  rule). The CAVE renders from the tracked head, and the logged `head_local_pos_*` is that
+  head transform. A frozen pose freezes the perspective; a jump or a dropout shifts the
+  view. If this happens while the 100 ms Gabor is shown, the stimulus can be displaced or
+  not visible, and the trial does not measure the task. A trial is flagged when one of
+  these overlaps its presentation window, from 0.3 s before onset to 0.1 s after the
+  Gabor's measured offset (`config.PRESENTATION_PRE_S`, `PRESENTATION_POST_S`), in the raw
+  head position before any repair:
+  - a spike (`clean.detect_outliers` on x, y or z);
+  - a jump beyond the per-axis plausibility radius (`clean.HEAD_CLEAN_AXES`);
+  - a freeze: stale frames for at least 0.1 s (`PRESENTATION_STALE_MIN_S`); a single
+    repeated frame does not move the view;
+  - a gap: no head sample for more than 0.25 s (`PRESENTATION_GAP_S`).
+
+  The 0.3 s lead covers the render-eye smoothing (1.8 Hz), which needs about that long to
+  settle after a jump. Short spikes count here although `clean.py` interpolates them for
+  the gait signal: interpolation repairs the analysis signal, not what was on the wall.
+  The window values were fixed before data collection was complete and are not tuned to
+  results.
+
+  Flagged trials are dropped from every trial-based analysis, in both scopes: accuracy, RT,
+  the timeout rate, the stride-phase tests, the thresholds, calibration transfer, SDT, DDM,
+  the gait PRC and the block rule itself. `bids_io.load_events` drops them while
+  `config.APPLY_PRESENTATION_RULE` is on (`ILL_PRESENTATION_RULE=0` turns it off). QC, the
+  gait sheets and `trial_table/trials.tsv` keep every trial; the trial table carries the
+  verdict as `presentation_valid` and `presentation_flag`. The flags are written to
+  `qc/presentation_flags.tsv` at the start of the `gate` stage and rebuilt when stale
+  (settings changed, events or motion newer than the file). Calibration runs log no head
+  tracking, so the rule cannot apply to calibration trials. To see what the rule changes,
+  see [The presentation rule: with and without](#the-presentation-rule-with-and-without).
 - **A block that ends early** (crash, disconnect, a copy cut off). `bidsify` keeps every
   whole frame before the break and drops a half-written last row. It reads a cut-off
   `.csv.gz` up to the cut, and marks the file `log_status = truncated` in `scans.tsv`. A log
@@ -147,7 +183,9 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   with no real head sample for > 0.25 s (at least 3 frame intervals) as a gap. Troughs and
   Hilbert phase within 0.5 s of it are discarded. `phase_at` gives no phase inside a
   step longer than 1.6× the block's median step, which is either a gap or a missed trough.
-  Trials there are left out of the stride-phase tests only. Their count per block is
+  Trials there are left out of the stride-phase tests only, unless the gap overlaps their
+  presentation window: the presentation rule (above) then drops them from every analysis.
+  Their count per block is
   `n_trials_no_phase` in the phase JSON; the block's gap count and length are `n_data_gaps` /
   `data_gap_total_s` in the gait JSON.
 - **Mocap diagnostic channels not recorded.** Stale frames are normally read from
@@ -160,6 +198,32 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   used (`stale_pose.source`). Without the mocap quaternion there is no head orientation, so
   `head_stability.py` and `gait_phase_methods.py` skip such blocks.
 
+## The presentation rule: with and without
+
+All results are computed with the presentation rule on. As a sensitivity analysis,
+`python -m Analysis.presentation_comparison` reruns the whole pipeline with the rule off on
+a temporary copy of the project and compares the two runs. It is not a pipeline stage. Run
+it on demand after a full pipeline run; it uses the dataset in `config.BIDS_DIR`, and the
+rule-off run takes as long as a full pipeline run. `--keep` keeps the rule-off copy, and
+`--reuse DIR` compares against a kept copy without rerunning.
+
+It writes `derivatives/sensitivity/presentation_rule/`:
+- `flagged_trials.tsv`: per block, the flagged trials by artefact kind, the accuracy of the
+  kept and the flagged trials, and the gate decision with and without the rule.
+- `flagged_accuracy.tsv`: whether flagged trials were answered worse than the kept trials
+  of the same blocks.
+- `gate_changes.tsv`: blocks whose behaviour-scope decision differs between the runs.
+- `key_results.tsv`: the headline results with and without the rule.
+- `pvalues.tsv` and `significance_flips.tsv`: p-values below 0.10 in either run, and
+  significance flags that differ.
+- `comparison.json`: the settings, the size of the dataset and the totals.
+
+Reading the p-values: `phase_analysis` draws every block's permutations from one seeded
+random stream. Removing trials anywhere therefore redraws the null of every later block,
+so a block's permutation p-value can move although the block lost no trial. Small
+crossings of 0.05 should be read against that. Four exploratory stages seed per process
+and differ between any two runs; their rows are marked.
+
 ## Run
 
 ```bash
@@ -171,6 +235,8 @@ python -m Analysis.run_pipeline --no-cache   # the same, recomputing everything
 python -m Analysis.bidsify               # raw CSV → BIDS + sourcedata gz
 python -m Analysis.calibration           # QUEST+ convergence + reliability check
 python -m Analysis.calibration_refit     # offline slope/lapse refit (--bids for real data)
+python -m Analysis.presentation          # flag trials shown during a head-tracking artefact
+python -m Analysis.block_rules           # exclusion gate (qc/gate.tsv)
 python -m Analysis.qc                    # tracking / behaviour QC
 python -m Analysis.gait                  # gait template, stride cycle, head trace
 python -m Analysis.trial_table           # every trial in one table (trial_table/trials.tsv)
@@ -190,6 +256,9 @@ python -m Analysis.ddm_phase             # EXPLORATORY: EZ-diffusion decompositi
 python -m Analysis.stance_foot           # EXPLORATORY: stance-foot (left/right) contrast
 python -m Analysis.sdt_phase             # EXPLORATORY: d-prime vs criterion decomposition
 python -m Analysis.report                # summary TSV + HTML report
+
+# on demand, after a full run: the pipeline again without the presentation rule, compared
+python -m Analysis.presentation_comparison   # writes sensitivity/presentation_rule/
 ```
 
 `gait` reuses an existing `*_gait.npz`; delete it (or the `gait/` derivatives) to rebuild the
@@ -231,7 +300,7 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `plot_calibration.py` | standalone CLI: convergence figure from a raw calibration CSV. |
 | `qc.py` | timing, tracking-channel, cleaning, treadmill and behaviour QC; writes one QC sheet per block (`*_qc.png`: head position raw vs cleaned with the size of every correction, belt speed, onsets, accuracy by level). |
 | `gait.py` | band-pass, trough (double-support) detection, stride cycle, gait template, `phase_at()`, Hilbert phase, effective-fs QC, and the **stance-foot labelling** (`label_steps`): per-step lateral-sway evidence, decoded under an alternation prior (Viterbi) and cross-checked against an independent rigid-body roll channel. Writes one gait sheet per block (`*_gait.png`: stride, head path, stance-foot decode). |
-| `trial_table.py` | every trial of every block in one long table, `trial_table/trials.tsv` (+ JSON column descriptions), for analyses outside the pipeline: visit, block order and the gap before each block, tilt, response, timeout, RT with `phase_analysis`'s RT filter as `rt_valid`, and for walking the step the onset falls in, stride phase (`PHASE_METHOD`), % step, stance foot and its evidence. Excluded blocks are kept with the gate's behaviour and gait decisions, so an analysis filters rather than rebuilds. |
+| `trial_table.py` | every trial of every block in one long table, `trial_table/trials.tsv` (+ JSON column descriptions), for analyses outside the pipeline: visit, block order and the gap before each block, tilt, response, timeout, RT with `phase_analysis`'s RT filter as `rt_valid`, and for walking the step the onset falls in, stride phase (`PHASE_METHOD`), % step, stance foot and its evidence. Excluded blocks are kept with the gate's behaviour and gait decisions, and every trial with its presentation verdict (`presentation_valid`, `presentation_flag`), so an analysis filters rather than rebuilds. |
 | `step_table.py` | every step of every walking block in one long table, `step_table/steps.tsv`: duration, `valid_step` (at most `MAX_STEP_RATIO` x the median), stance foot, its evidence and ambiguity, stride number, and the lateral sway and vertical bob over the step. Joins `trials.tsv` on `(recording, step)`. |
 | `phase_analysis.py` | 40-bin stride binning, Fourier fit 0.1–10 cps, **weighted by bin occupancy** and run on **difficulty-adjusted** accuracy over the **answered** trials (primary), RT and the **timeout rate** (secondary) (§4b, §4e). **Primary per-participant test = confirmatory at 2 and 4 cps (Holm)**; the full-grid max-R² scan is exploratory. Significance by 1000× trial-level permutation with re-binning. |
 | `group_agnostic.py` | **THE CONFIRMATORY POPULATION TEST.** `S(f) = Σᵢ\|zᵢ\|²/sᵢ²` at 2 and 4 cps, Holm-corrected, **studentised** by each participant's own null so no one dominates the sum by being noisy (under H0 each contributes 1, so `S ≈ n`). Runs on the **primary** measure (accuracy) plus two secondary ones (reaction time, timeout rate); only accuracy carries a family-wise claim. Invariant to rotating any individual `zᵢ`, so it detects oscillation whatever phase each participant prefers — the point at Davidson's coherence of R = 0.33, where it reaches 91 % power at N = 12 × 1440 against a common-phase contrast's 15 %. Its null reuses `phase_analysis`'s own permutations, so it is exact by construction. |
@@ -255,9 +324,11 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `head_stability.py` | EXPLORATORY — head pitch against the vertical bob over the stride: step-band coupling, head fixation point, gaze compensation at the 2 m stimulus distance (§5). |
 | `gait_dynamics.py` | EXPLORATORY — stride-time CV, DFA long-range correlations and short-term local dynamic stability per walking block (§5). |
 | `gait_prc.py` | EXPLORATORY — do stimulus onsets or button presses shift the gait rhythm? Phase response curve against a frame-locked random-time null (§5). |
-| `block_rules.py` | builds the exclusion gate `qc/gate.tsv` (chance / reversal / timeouts per block, unreliable calibrations out of the refit, plus the manual list), with a behaviour and a gait scope; read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
+| `block_rules.py` | builds the exclusion gate `qc/gate.tsv` (chance / reversal / timeouts per block on its presentation-valid trials, unreliable calibrations out of the refit, plus the manual list), with a behaviour and a gait scope; read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
+| `presentation.py` | the presentation rule: flags every trial whose presentation window (0.3 s before onset to 0.1 s after the Gabor's offset) overlaps a head-tracking spike, jump, freeze or gap, writes `qc/presentation_flags.tsv`, and tells `bids_io.load_events` which trials to drop (see Missing and partial data). |
+| `presentation_comparison.py` | on demand, not a pipeline stage: reruns the whole pipeline with the presentation rule off on a temporary copy and compares it with the current results; writes `sensitivity/presentation_rule/` (see [The presentation rule: with and without](#the-presentation-rule-with-and-without)). |
 | `report.py` | dataset summary TSV + self-contained HTML report; writes `provenance.json`, `exclusions.tsv` (each block's gate decision for both scopes, plus non-blocking warnings) and the N-per-stage ledger. |
-| `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
+| `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending; trials dropped by the presentation rule as presentation artefacts). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
 | `prevalence_planning.py` | prevalence-precision (HPDI width) vs N planning simulation. |
 | `simulate_participants.py` | N synthetic participants in the two-visit topology into a separate `bids_sim/`, run through the whole pipeline. Trials come from a Davidson-calibrated generative drift-diffusion model; the injected truth is written to `sim_truth.json`. |
 | `tests/test_pipeline.py` | inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |

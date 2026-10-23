@@ -1876,22 +1876,88 @@ def test_block_rule_leaves_timeouts_out():
     try:
         bids_io.scan_meta = lambda r: {"visit": 1}
         block_rules.calibration_verdict = lambda *a: "RELIABLE"
-        bids_io.load_events = lambda r: events(95, 57, 18)
+        bids_io.load_events = lambda r, **k: events(95, 57, 18)
         v = block_rules.evaluate(rec, alpha=0.05)
         assert (v["n_trials"], v["n_answered"], v["n_correct"]) == (170, 152, 95)
         assert v["exclude"] is False, v["reason"]
-        bids_io.load_events = lambda r: events(70, 70, 30)
+        bids_io.load_events = lambda r, **k: events(70, 70, 30)
         v = block_rules.evaluate(rec, alpha=0.05)
         assert v["exclude"] is True and v["reason"].startswith("chance")
-        bids_io.load_events = lambda r: events(50, 100, 20)
+        bids_io.load_events = lambda r, **k: events(50, 100, 20)
         assert block_rules.evaluate(rec, alpha=0.05)["reason"].startswith("reversal")
-        bids_io.load_events = lambda r: events(100, 28, 42)          # 24.7 % timeouts
+        bids_io.load_events = lambda r, **k: events(100, 28, 42)     # 24.7 % timeouts
         assert block_rules.evaluate(rec, alpha=0.05)["exclude"] is False
-        bids_io.load_events = lambda r: events(100, 27, 43)          # 25.3 % timeouts
+        bids_io.load_events = lambda r, **k: events(100, 27, 43)     # 25.3 % timeouts
         v = block_rules.evaluate(rec, alpha=0.05)
         assert v["exclude"] is True and v["reason"].startswith("timeouts"), v["reason"]
     finally:
         bids_io.load_events, bids_io.scan_meta, block_rules.calibration_verdict = old
+
+
+def test_presentation_rule_flags_artefacts_in_the_presentation_window():
+    """A frozen pose, a jump or a gap anywhere from 0.3 s before onset to 0.1 s after the
+    Gabor's offset flags the trial; one repeated frame, or an artefact outside the window,
+    does not."""
+    import presentation
+    fs = 60.0
+    t = np.arange(0, 20, 1 / fs)
+    m = pd.DataFrame({"t": t, "head_local_pos_x": 0.01 * np.sin(2 * np.pi * 0.9 * t),
+                      "head_local_pos_y": 0.02 * np.sin(2 * np.pi * 1.8 * t),
+                      "head_local_pos_z": np.zeros(t.size),
+                      "mocap_frame_advanced": np.ones(t.size, int)})
+    m.loc[(t >= 5.0) & (t < 5.3), "mocap_frame_advanced"] = 0     # 0.3 s freeze
+    m.loc[np.argmin(np.abs(t - 10.0)), "mocap_frame_advanced"] = 0  # one repeated frame
+    m.loc[(t >= 12.0) & (t < 12.5), "head_local_pos_x"] += 1.0      # 1 m jump
+    m = m[~((t > 15.0) & (t < 15.5))].reset_index(drop=True)         # 0.5 s dropout
+    onset = np.array([5.35, 4.6, 4.85, 10.0, 12.2, 15.2, 8.0])
+    flagged, why = presentation.flag_trials(onset, np.full(onset.size, 0.1),
+                                            presentation.artefact_spans(m))
+    assert flagged.tolist() == [True, False, True, False, True, True, False], why
+    assert why[0] == "freeze" and why[2] == "freeze" and why[5] == "gap"
+    assert "jump" in why[4] or "spike" in why[4]
+    assert why[1] == why[3] == why[6] == "-"
+
+
+def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
+    """Freezing the head pose around one main trial removes exactly that trial from
+    load_events and from the gate's counts; the trial table keeps it, flagged; with the
+    rule off every trial is back."""
+    import tempfile
+    import bids_io
+    import block_rules
+    import presentation
+    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_PRESENTATION_RULE)
+    rng = np.random.default_rng(4)
+    with tempfile.TemporaryDirectory() as td:
+        raw, bids = _gate_dataset(td, rng)
+        try:
+            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
+            C.APPLY_PRESENTATION_RULE = True
+            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
+            rec = bids_io.find_recordings(bids, include_excluded=True)[0]
+            before = {r["recording"]: r for r in block_rules.main(quiet=True)}[rec.label()]
+            n_valid = len(bids_io.load_events(rec))
+            ev = bids_io.load_events(rec, presentation_rule=False)
+            target = ev[(ev["is_training"] == 0)
+                        & presentation.valid_mask(rec, ev)].iloc[3]
+            motion, channels, _ = bids_io.load_motion(rec)
+            win = (motion["t"] >= target["onset"] - 0.1) & (motion["t"] <= target["onset"] + 0.1)
+            motion.loc[win, "mocap_frame_advanced"] = 0
+            motion.to_csv(rec.motion_tsv, sep="\t", index=False, header=False, na_rep="n/a")
+
+            kept = bids_io.load_events(rec)                  # flags rebuilt: motion is newer
+            assert len(kept) == n_valid - 1
+            assert not np.isclose(kept["onset"], target["onset"]).any()
+            after = {r["recording"]: r for r in block_rules.main(quiet=True)}[rec.label()]
+            assert after["n_presentation_flagged"] == before["n_presentation_flagged"] + 1
+            assert after["n_trials"] == before["n_trials"] - 1
+            flags = presentation.trial_flags(rec, ev)
+            assert flags.loc[np.isclose(ev["onset"], target["onset"]),
+                             "presentation_flag"].item() == "freeze"
+            C.APPLY_PRESENTATION_RULE = False
+            assert len(bids_io.load_events(rec)) == len(ev)
+        finally:
+            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_PRESENTATION_RULE = old
 
 
 def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
@@ -2282,7 +2348,8 @@ def test_trial_and_step_tables_cover_every_block_and_join():
             trials = tt.main()
             steps = stt.main()
             recs = bids_io.find_recordings(bids, include_excluded=True)
-            assert len(trials) == sum(len(bids_io.load_events(r)) for r in recs)
+            assert len(trials) == sum(len(bids_io.load_events(r, presentation_rule=False))
+                                      for r in recs)
             on_disk = pd.read_csv(C.DERIV_DIR / "trial_table" / tt.TABLE_FILE, sep="\t",
                                   na_values=["n/a"])
             assert list(on_disk.columns) == list(tt.COLUMNS) and len(on_disk) == len(trials)
