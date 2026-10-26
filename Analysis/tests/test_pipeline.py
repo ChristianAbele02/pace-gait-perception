@@ -1741,7 +1741,8 @@ def test_each_block_gets_one_sheet_per_stage_in_a_figures_folder():
 
 
 def _gate_dataset(td, rng):
-    """Three walking blocks of p01 (normal, reversed, guessing) plus one calibration."""
+    """Two walking blocks of p01 (normal, reversed), one of p02 (guessing), plus p01's
+    calibrations."""
     raw = Path(td) / "raw"; raw.mkdir()
     bids = Path(td) / "bids"; bids.mkdir()
     for t in (1, 2, 3):
@@ -1753,7 +1754,8 @@ def _gate_dataset(td, rng):
         if t == 3:                                  # pure guessing
             df.loc[res, "response-correct"] = np.where(
                 rc >= 0, rng.integers(0, 2, res.sum()), rc)
-        df.to_csv(raw / f"p01-b1-t{t:02d}_walking.csv", sep=";", index=False)
+        name = "p02-b1-t01_walking.csv" if t == 3 else f"p01-b1-t{t:02d}_walking.csv"
+        df.to_csv(raw / name, sep=";", index=False)
     (raw / "p01-b1-t01_calibration_walking.csv").write_text(_min_calib_csv(3.0))
     (raw / "p01-b0-t01_calibration_standing.csv").write_text(_min_calib_csv(3.0))
     return raw, bids
@@ -1858,31 +1860,33 @@ def test_calibration_transfer_recovers_threshold_and_flags_a_miss():
     assert ceiling["censored"] == "low"
 
 
-def test_block_rule_leaves_timeouts_out():
-    """Chance is tested on the answered trials: 95 right of 152 answered (18 timeouts)
-    passes, though 95/170 with timeouts as wrong would not; a
-    guesser with many timeouts still fails. 25 % or more timeouts fail on their own."""
+def test_block_rule_judges_each_block_on_frame_rate_reversal_and_timeouts():
+    """Per block: answered trials are counted with timeouts left out (95 right of 152
+    answered, 18 timeouts); a block significantly below chance is a reversal; 25 % or more
+    timeouts fail on their own; a block logged at 6 Hz, or whose stimuli stayed up over
+    twice their nominal time, fails the frame-rate check, which excludes it from both
+    scopes. Chance is not judged per block."""
     import types
     import bids_io
     import block_rules
 
-    def events(k, n_wrong, n_timeout):
+    def events(k, n_wrong, n_timeout, dur=0.15):
         rc = [1.0] * k + [0.0] * n_wrong + [np.nan] * n_timeout
         return pd.DataFrame({"is_training": [1] * 5 + [0] * len(rc),
-                             "response_correct": [1.0] * 5 + rc})
+                             "response_correct": [1.0] * 5 + rc,
+                             "duration": dur})
 
     old = (bids_io.load_events, bids_io.scan_meta, block_rules.calibration_verdict)
     rec = types.SimpleNamespace(sub="sub-01", condition="walking", label=lambda: "x")
     try:
-        bids_io.scan_meta = lambda r: {"visit": 1}
+        bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "58.8"}
         block_rules.calibration_verdict = lambda *a: "RELIABLE"
         bids_io.load_events = lambda r, **k: events(95, 57, 18)
         v = block_rules.evaluate(rec, alpha=0.05)
         assert (v["n_trials"], v["n_answered"], v["n_correct"]) == (170, 152, 95)
         assert v["exclude"] is False, v["reason"]
-        bids_io.load_events = lambda r, **k: events(70, 70, 30)
-        v = block_rules.evaluate(rec, alpha=0.05)
-        assert v["exclude"] is True and v["reason"].startswith("chance")
+        bids_io.load_events = lambda r, **k: events(70, 70, 30)      # a guessing block
+        assert block_rules.evaluate(rec, alpha=0.05)["exclude"] is False
         bids_io.load_events = lambda r, **k: events(50, 100, 20)
         assert block_rules.evaluate(rec, alpha=0.05)["reason"].startswith("reversal")
         bids_io.load_events = lambda r, **k: events(100, 28, 42)     # 24.7 % timeouts
@@ -1890,8 +1894,44 @@ def test_block_rule_leaves_timeouts_out():
         bids_io.load_events = lambda r, **k: events(100, 27, 43)     # 25.3 % timeouts
         v = block_rules.evaluate(rec, alpha=0.05)
         assert v["exclude"] is True and v["reason"].startswith("timeouts"), v["reason"]
+        assert v["technical_exclude"] is False
+
+        bids_io.load_events = lambda r, **k: events(120, 40, 10)
+        bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "6.3"}
+        v = block_rules.evaluate(rec, alpha=0.05)
+        assert v["technical_exclude"] is True and v["reason"].startswith("frame rate"), v
+        bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "58.8"}
+        bids_io.load_events = lambda r, **k: events(120, 40, 10, dur=0.53)
+        v = block_rules.evaluate(rec, alpha=0.05)
+        assert v["technical_exclude"] is True and "stimulus" in v["reason"], v
     finally:
         bids_io.load_events, bids_io.scan_meta, block_rules.calibration_verdict = old
+
+
+def test_chance_is_judged_per_participant_and_condition():
+    """A weak block of a participant who does the task is kept (55 % next to blocks at
+    70 %); a participant who guesses in every block loses them all; a block already out
+    for a per-block criterion or on the manual list stays out of the pool."""
+    import block_rules
+
+    def row(sub, cond, rec, k, n, out=False):
+        return {"recording": rec, "participant": sub, "condition": cond,
+                "n_answered": n, "n_correct": k, "rule": "reversal" if out else "pass",
+                "rule_exclude": out}
+
+    rows = [row("sub-01", "walking", "a1", 112, 160), row("sub-01", "walking", "a2", 88, 160),
+            row("sub-01", "walking", "a3", 30, 150, out=True),
+            row("sub-01", "standing", "a4", 84, 160),                   # 52.5 % alone
+            row("sub-02", "walking", "b1", 80, 160), row("sub-02", "walking", "b2", 83, 160),
+            row("sub-02", "walking", "b3", 150, 160)]                   # manual: left out
+    block_rules.pool_chance(rows, manual={"b3": "flipped view"}, alpha=0.05)
+    by = {r["recording"]: r for r in rows}
+    assert not by["a2"]["rule_exclude"] and by["a2"]["chance_n_answered"] == 320
+    assert by["a3"]["rule"] == "reversal" and by["a3"]["chance_n_answered"] == "n/a"
+    assert by["a4"]["rule_exclude"] and by["a4"]["rule"].startswith("chance")
+    assert by["b1"]["rule_exclude"] and by["b2"]["rule_exclude"]
+    assert by["b1"]["chance_n_answered"] == 320 and by["b3"]["chance_n_answered"] == "n/a"
+    assert not by["b3"]["rule_exclude"]
 
 
 def test_presentation_rule_flags_artefacts_in_the_presentation_window():
@@ -1961,10 +2001,10 @@ def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
 
 
 def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
-    """The gate flags a reversed and a guessing block. With the rule off nothing but the
-    manual list is excluded; with it on, the behavioural analyses lose the flagged blocks
-    while the gait analyses keep them. An UNRELIABLE calibration leaves the pooled refit,
-    but the above-chance block run on it stays in."""
+    """The gate flags a reversed block and a guessing participant. With the rule off
+    nothing but the manual list is excluded; with it on, the behavioural analyses lose the
+    flagged blocks while the gait analyses keep them. An UNRELIABLE calibration leaves the
+    pooled refit, but the above-chance block run on it stays in."""
     import tempfile
     import bids_io
     import block_rules
@@ -1986,17 +2026,18 @@ def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
                  ).write_text('{"verdict": "%s"}' % verdict)
 
             C.APPLY_BLOCK_RULE = False
-            rows = {r["recording"][-6:]: r for r in block_rules.main()
+            rows = {bids_io._brief(r["recording"]): r for r in block_rules.main()
                     if r["unit"] == "block"}
             assert (bids / "derivatives" / "qc" / bids_io.GATE_FILE).exists()
-            assert rows["run-01"]["rule_exclude"] is False
-            assert rows["run-02"]["rule"].startswith("reversal")
-            assert rows["run-03"]["rule"].startswith("chance")
+            assert rows["sub-01 walking run-01"]["rule_exclude"] is False
+            assert rows["sub-01 walking run-02"]["rule"].startswith("reversal")
+            assert rows["sub-02 walking run-01"]["rule"].startswith("chance")
+            assert not any(r["technical_exclude"] for r in rows.values())
             assert len(bids_io.find_recordings(bids)) == 3, "rule applied while off"
             assert bids_io.excluded_calibrations() == {}
 
             C.APPLY_BLOCK_RULE = True            # settings changed: gate rebuilt on read
-            assert [r.run for r in bids_io.find_recordings(bids)] == ["01"]
+            assert [(r.sub, r.run) for r in bids_io.find_recordings(bids)] == [("sub-01", "01")]
             assert len(bids_io.find_recordings(bids, scope="gait")) == 3
             assert len(bids_io.find_recordings(bids, include_excluded=True)) == 3
             assert list(bids_io.excluded_calibrations()) == [bids_io.calibration_label(cal_beh)]
@@ -2007,7 +2048,8 @@ def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
             blk = gate[gate["unit"] == "block"].set_index("recording")
             assert set(blk["gait"]) == {"include"}
             assert (blk["behaviour"] == "exclude").sum() == 2
-            assert blk.filter(like="run-01", axis=0)["calibration_verdict"].str.startswith(
+            assert blk.filter(like="sub-01_ses-02_task-ILL_acq-walking_run-01",
+                              axis=0)["calibration_verdict"].str.startswith(
                 "UNRELIABLE").all(), "the calibration verdict is not recorded with the block"
         finally:
             C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
@@ -2023,13 +2065,13 @@ def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
     rng = np.random.default_rng(1)
     with tempfile.TemporaryDirectory() as td:
         raw, bids = _gate_dataset(td, rng)
-        (raw / "p01-b1-t03_walking.csv").unlink()           # the guessing block comes later
+        (raw / "p02-b1-t01_walking.csv").unlink()           # the guessing block comes later
         late = Path(td) / "late"; late.mkdir()
         df = _raw_block(dur_s=400.0, seed=3)
         res = df["checkpoint-index"] != -1
         rc = df.loc[res, "response-correct"]
         df.loc[res, "response-correct"] = np.where(rc >= 0, rng.integers(0, 2, res.sum()), rc)
-        df.to_csv(late / "p01-b1-t03_walking.csv", sep=";", index=False)
+        df.to_csv(late / "p02-b1-t01_walking.csv", sep=";", index=False)
         try:
             C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
             C.APPLY_BLOCK_RULE = True
@@ -2038,20 +2080,21 @@ def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
             assert bids_io.gate_staleness() is None
             bidsify.convert_all(raw_dir=late, bids_dir=bids, prune_loose=False)
             assert "added" in bids_io.gate_staleness()
-            assert [r.run for r in bids_io.find_recordings(bids)] == ["01"], \
-                "the late guessing block slipped past a stale gate"
+            assert [(r.sub, r.run) for r in bids_io.find_recordings(bids)] == \
+                [("sub-01", "01")], "the late guessing block slipped past a stale gate"
             assert bids_io.gate_staleness() is None
 
             # output of a block excluded later
-            ph = bids_io.deriv_dir("phase", "sub-01", "ses-02")
-            stale = ph / "sub-01_ses-02_task-ILL_acq-walking_run-03_phase.json"
-            kept = ph / "sub-01_ses-02_task-ILL_acq-walking_run-01_phase.json"
+            stale = (bids_io.deriv_dir("phase", "sub-02", "ses-02")
+                     / "sub-02_ses-02_task-ILL_acq-walking_run-01_phase.json")
+            kept = (bids_io.deriv_dir("phase", "sub-01", "ses-02")
+                    / "sub-01_ses-02_task-ILL_acq-walking_run-01_phase.json")
             stale.write_text("{}"); kept.write_text("{}")
             row = bids_io.gate_report("phase", condition="walking", n_analysed=1,
                                       prune=("phase",))
             assert not stale.exists() and kept.exists()
             assert (row["units_total"], row["units_included"]) == (3, 1)
-            assert (row["participants_total"], row["participants_included"]) == (1, 1)
+            assert (row["participants_total"], row["participants_included"]) == (2, 1)
             bids_io.gate_report("gait", "gait", condition="walking", n_analysed=1)
             bids_io.gate_report("phase", condition="walking", n_analysed=1)   # upsert
             led = pd.read_csv(bids / "derivatives" / "qc" / bids_io.GATE_LEDGER_FILE,
@@ -2353,8 +2396,9 @@ def test_trial_and_step_tables_cover_every_block_and_join():
             on_disk = pd.read_csv(C.DERIV_DIR / "trial_table" / tt.TABLE_FILE, sep="\t",
                                   na_values=["n/a"])
             assert list(on_disk.columns) == list(tt.COLUMNS) and len(on_disk) == len(trials)
-            by_run = trials.groupby("run")["behaviour"].first()
-            assert by_run.to_dict() == {1: "include", 2: "exclude", 3: "exclude"}
+            by_block = trials.groupby(["participant", "run"])["behaviour"].first()
+            assert by_block.to_dict() == {("sub-01", 1): "include", ("sub-01", 2): "exclude",
+                                          ("sub-02", 1): "exclude"}
             assert (trials["gait"] == "include").all()
             assert trials.loc[trials["timeout"] == 1, "correct"].isna().all()
             assert steps["recording"].nunique() == 3

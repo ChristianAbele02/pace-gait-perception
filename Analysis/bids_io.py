@@ -110,7 +110,8 @@ def _condition_for(sub: str, ses: str, bids_dir: Path) -> str:
 # One decision column per scope, since a participant at chance can still have good gait:
 #   behaviour - analyses of responses (accuracy, RT, thresholds, SDT, DDM...): manual list
 #               plus the automatic rule while config.APPLY_BLOCK_RULE is on.
-#   gait      - analyses of walking only: manual list only.
+#   gait      - analyses of walking only: manual list plus the frame-rate criterion, which
+#               makes the gait unmeasurable too.
 # Below block level, load_events() drops the trials the presentation rule flags
 # (presentation.py, derivatives/qc/presentation_flags.tsv) in both scopes. The block
 # rule is judged on the remaining trials.
@@ -130,10 +131,13 @@ def gate_settings() -> dict:
         from . import presentation
     except ImportError:
         import presentation
-    return {"RuleVersion": 5,
+    return {"RuleVersion": 6,
             "RuleActive": bool(getattr(C, "APPLY_BLOCK_RULE", False)),
             "Alpha": float(getattr(C, "BLOCK_RULE_ALPHA", 0.05)),
             "MaxTimeoutFraction": float(getattr(C, "BLOCK_RULE_MAX_TIMEOUT_FRACTION", 0.25)),
+            "MinSamplingHz": float(getattr(C, "BLOCK_RULE_MIN_SAMPLING_HZ", 30.0)),
+            "MaxStimFactor": float(getattr(C, "BLOCK_RULE_MAX_STIM_FACTOR", 2.0)),
+            "ChanceUnit": "participant x condition",
             "Manual": dict(sorted(getattr(C, "EXCLUDED_RECORDINGS", {}).items())),
             "PresentationRule": {
                 "Active": bool(getattr(C, "APPLY_PRESENTATION_RULE", False)),
@@ -149,8 +153,8 @@ def gate_staleness(bids_dir: Path | None = None) -> str | None:
     """Reason the gate file is out of date, or None if current.
 
     Stale if missing, if blocks or calibrations were added or removed, if its config
-    changed, or if an input (events, calibration tables, calibration verdicts, the
-    presentation flags) is newer.
+    changed, or if an input (events, scans tables, calibration tables, calibration
+    verdicts, the presentation flags) is newer.
     """
     f = _qc_dir(bids_dir) / GATE_FILE
     meta = f.with_suffix(".json")
@@ -170,6 +174,7 @@ def gate_staleness(bids_dir: Path | None = None) -> str | None:
         return "exclusion settings in config.py changed"
     deriv = Path(bids_dir or C.BIDS_DIR) / "derivatives" / "calibration"
     inputs = ([r.events_tsv for r in recs] + list(cals)
+              + list(Path(bids_dir or C.BIDS_DIR).glob("sub-*/sub-*_scans.tsv"))
               + list(deriv.glob("sub-*/*/*_calibration_qc.json"))
               + [_qc_dir(bids_dir) / "presentation_flags.tsv"])
     newest = max((q.stat().st_mtime for q in inputs if q.exists()), default=0.0)
@@ -207,19 +212,22 @@ def excluded_recordings(bids_dir: Path | None = None,
                         scope: str = "behaviour") -> dict[str, str]:
     """``{recording label: reason}`` for blocks excluded from ``scope``.
 
-    Always includes ``config.EXCLUDED_RECORDINGS``. For ``behaviour`` also the blocks the
-    automatic rule flags, if ``config.APPLY_BLOCK_RULE`` (or ``apply_block_rule``) is True.
+    Always includes ``config.EXCLUDED_RECORDINGS``. If ``config.APPLY_BLOCK_RULE`` (or
+    ``apply_block_rule``) is True, also the blocks the automatic rule fails: every
+    criterion for ``behaviour``, the frame-rate criterion alone for ``gait``.
     """
     _check_scope(scope)
     out = {k: f"manual: {v}" for k, v in getattr(C, "EXCLUDED_RECORDINGS", {}).items()}
     if apply_block_rule is None:
         apply_block_rule = bool(getattr(C, "APPLY_BLOCK_RULE", False))
-    if apply_block_rule and scope == "behaviour":
+    if apply_block_rule:
         gate = load_gate(bids_dir)
         if not gate.empty:
-            hit = gate[(gate["unit"] == "block") & (gate["rule_exclude"].str.lower() == "true")]
-            for _, r in hit.iterrows():
-                out.setdefault(r["recording"], f"block rule: {r['rule']}")
+            col = "rule_exclude" if scope == "behaviour" else "technical_exclude"
+            if col in gate:
+                hit = gate[(gate["unit"] == "block") & (gate[col].str.lower() == "true")]
+                for _, r in hit.iterrows():
+                    out.setdefault(r["recording"], f"block rule: {r['rule']}")
     return out
 
 

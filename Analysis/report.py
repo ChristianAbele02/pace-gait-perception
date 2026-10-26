@@ -558,10 +558,12 @@ amplitude {power.REF_AMP} at the achieved target count (b7).</p>
 (Analysis/block_rules.py). <code>behaviour</code>: blocks used by analyses of the responses;
 excluded are the manual list (config.EXCLUDED_RECORDINGS) and, while
 <code>config.APPLY_BLOCK_RULE</code> is on (now {getattr(C, "APPLY_BLOCK_RULE", False)}), blocks
-whose accuracy on the answered trials is not above chance or significantly below it, or
-with 25 % or more of the trials unanswered (an unreliable calibration leaves only the pooled
-calibration refit). <code>gait</code>: blocks used by analyses of the walking alone; only the manual
-list excludes there. Warnings never exclude anything.</p>
+logged at too low a frame rate, blocks whose accuracy on the answered trials is significantly
+below chance or with 25 % or more of the trials unanswered, and all blocks of a participant
+in a condition whose pooled accuracy on the answered trials is not above chance (an
+unreliable calibration leaves only the pooled calibration refit). <code>gait</code>: blocks used
+by analyses of the walking alone; only the manual list and the frame-rate criterion exclude
+there. Warnings never exclude anything.</p>
 {excl_table_html}
 <h2>Data quality overview</h2>
 <p class="note">Blocks and trials recorded, kept and excluded per participant x condition,

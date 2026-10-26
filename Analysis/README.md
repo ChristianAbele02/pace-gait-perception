@@ -80,24 +80,40 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   would otherwise enter the standing-vs-walking contrasts on one side only.
 - **Exclusion gate** (`block_rules.py`, stage `gate`, run straight after the calibration
   verdicts and before any analysis). One file, `derivatives/qc/gate.tsv`, holds a row for every
-  block and every calibration, and every analysis stage reads it. Each block is checked
-  against three criteria, and each calibration against a fourth:
-  1. **Chance:** accuracy over the answered main trials not above chance, one-sided binomial
-     against 0.5 (`config.BLOCK_RULE_ALPHA`). Timeouts are left out rather than counted as
-     wrong: a missed response says nothing about whether the tilt was seen, and with timeouts
-     scored wrong a guesser's expected accuracy falls below 0.5, so the test would compare
-     against the wrong null. With ~150–170 answered trials a block needs ~57 % to pass. This
-     removes only blocks with no evidence the task was done. It is deliberately not a cut-off
-     like 60–70 %, which would drop blocks that were merely hard and bias the
-     standing-vs-walking comparison.
+  block and every calibration, and every analysis stage reads it. Criteria 1–3 judge each
+  block on its own, criterion 4 a participant in one condition over all their blocks, and
+  criterion 5 each calibration:
+  1. **Frame rate:** the block's effective sampling rate (`scans.tsv`) is below 30 Hz
+     (`config.BLOCK_RULE_MIN_SAMPLING_HZ`), or the median measured on-screen time of its
+     stimuli is over twice the nominal 0.1 s (`config.BLOCK_RULE_MAX_STIM_FACTOR`). The head
+     node runs the task and the logger once per rendered frame, normally at ~60 Hz. A head
+     node running far slower keeps the Gabor up for several frames, which is a different,
+     easier task, and samples the head too coarsely to time the steps: at 6 Hz a trough is
+     only located to within ~80 ms, about 100° of phase at 4 cps. Neither the responses nor
+     the gait of such a block can be analysed, so it leaves both scopes.
   2. **Reversal:** accuracy over the answered trials significantly *below* chance, which
      points to reversed answers or an invalid stimulus, not guessing.
   3. **Timeouts:** 25 % or more of the main trials unanswered
      (`config.BLOCK_RULE_MAX_TIMEOUT_FRACTION`). A block with that many missed responses was
      not done as instructed, and its accuracy would rest on a self-selected subset of trials.
-  4. **Calibration:** an UNRELIABLE calibration is left out of the pooled calibration refit
+  4. **Chance:** a participant's accuracy over the answered main trials of all their blocks in
+     one condition (those passing 1–3 and not on the manual list, pooled across visits) is
+     not above chance, one-sided binomial against 0.5 (`config.BLOCK_RULE_ALPHA`); all of
+     those blocks are then excluded. Timeouts are left out rather than counted as wrong: a
+     missed response says nothing about whether the tilt was seen, and with timeouts scored
+     wrong a guesser's expected accuracy falls below 0.5, so the test would compare against
+     the wrong null. The test pools the blocks because one block is too small to judge: with
+     ~150 answered trials it needs ~57 %, and a block whose true accuracy is 60 % fails
+     about one time in four by chance alone. Pooled over a condition, a participant who does
+     the task passes and one who guesses fails. A weak block of a participant who does the
+     task is kept: dropping blocks for their accuracy would select on the outcome, and the
+     harder condition would lose the most blocks, biasing the standing-vs-walking
+     comparison. For the same reason it is not a cut-off like 60–70 %. Each block's own
+     accuracy and binomial p stay in `gate.tsv` as a description, next to the pooled
+     numbers (`chance_n_answered`, `chance_n_correct`, `chance_p_above`).
+  5. **Calibration:** an UNRELIABLE calibration is left out of the pooled calibration refit
      and the slope-invariance test. Its blocks are not excluded for it; they are judged by
-     1–3 on their own responses, and the verdict is recorded with them in the gate (the
+     1–4 on their own responses, and the verdict is recorded with them in the gate (the
      latest calibration of that condition and visit counts). An off-target threshold makes
      the levels harder or easier than planned, which the difficulty residualisation absorbs.
 
@@ -111,17 +127,17 @@ participant has, so a lost block or a lost visit costs trials, not the participa
   Easy-trial accuracy is deliberately not a criterion. At ~17 easy trials a binomial test on
   them wrongly fails an engaged participant 10–40% of the time, so it stays a QC warning.
 
-  Criteria 1–3 use only the trials the presentation rule (next item) keeps. `gate.tsv` gives
+  Criteria 2–4 use only the trials the presentation rule (next item) keeps. `gate.tsv` gives
   each block's valid main trials as `n_trials` and the trials the rule removed as
   `n_presentation_flagged`.
 
-  The gate has two **scopes**, because the rule judges the *responses*:
+  The gate has two **scopes**, because criteria 2–4 judge the *responses*:
   - `behaviour` — every analysis of the responses (stride-phase tests, GLMM, population,
     clock-time, conditions, H5 thresholds, descriptive, onset/response, GAM, DDM, stance
     foot, SDT). Excluded: the manual list plus every block the rule fails.
   - `gait` — analyses of the walking alone (gait extraction, phase methods, head stability,
-    gait dynamics, gait PRC). Excluded: the manual list only. A participant answering at
-    chance still contributes their walking.
+    gait dynamics, gait PRC). Excluded: the manual list and the frame-rate criterion. A
+    participant answering at chance still contributes their walking.
 
   `bids_io.find_recordings(scope=...)` applies it (default `behaviour`, the strict one). The
   rule is switched on by `config.APPLY_BLOCK_RULE`; with it off the verdicts are still
@@ -324,11 +340,11 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `head_stability.py` | EXPLORATORY — head pitch against the vertical bob over the stride: step-band coupling, head fixation point, gaze compensation at the 2 m stimulus distance (§5). |
 | `gait_dynamics.py` | EXPLORATORY — stride-time CV, DFA long-range correlations and short-term local dynamic stability per walking block (§5). |
 | `gait_prc.py` | EXPLORATORY — do stimulus onsets or button presses shift the gait rhythm? Phase response curve against a frame-locked random-time null (§5). |
-| `block_rules.py` | builds the exclusion gate `qc/gate.tsv` (chance / reversal / timeouts per block on its presentation-valid trials, unreliable calibrations out of the refit, plus the manual list), with a behaviour and a gait scope; read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
+| `block_rules.py` | builds the exclusion gate `qc/gate.tsv`: frame rate, reversal and timeouts per block, chance per participant × condition over their blocks (both on the presentation-valid trials), unreliable calibrations out of the refit, plus the manual list; with a behaviour and a gait scope (the frame-rate criterion and the manual list apply to both); read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
 | `presentation.py` | the presentation rule: flags every trial whose presentation window (0.3 s before onset to 0.1 s after the Gabor's offset) overlaps a head-tracking spike, jump, freeze or gap, writes `qc/presentation_flags.tsv`, and tells `bids_io.load_events` which trials to drop (see Missing and partial data). |
 | `presentation_comparison.py` | on demand, not a pipeline stage: reruns the whole pipeline with the presentation rule off on a temporary copy and compares it with the current results; writes `sensitivity/presentation_rule/` (see [The presentation rule: with and without](#the-presentation-rule-with-and-without)). |
 | `report.py` | dataset summary TSV + self-contained HTML report; writes `provenance.json`, `exclusions.tsv` (each block's gate decision for both scopes, plus non-blocking warnings) and the N-per-stage ledger. |
-| `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending; trials dropped by the presentation rule as presentation artefacts). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
+| `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (low frame rate, chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending; trials dropped by the presentation rule as presentation artefacts). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
 | `prevalence_planning.py` | prevalence-precision (HPDI width) vs N planning simulation. |
 | `simulate_participants.py` | N synthetic participants in the two-visit topology into a separate `bids_sim/`, run through the whole pipeline. Trials come from a Davidson-calibrated generative drift-diffusion model; the injected truth is written to `sim_truth.json`. |
 | `tests/test_pipeline.py` | inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |

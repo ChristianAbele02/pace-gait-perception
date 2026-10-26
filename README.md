@@ -518,10 +518,12 @@ reset by task events, head stabilisation, stride-to-stride dynamics, stride-phas
 
 **Missing data and exclusions.** No stage needs a complete set of blocks; truncated logs are
 read up to the break, and tracking gaps get no stride phase. One exclusion gate
-(`derivatives/qc/gate.tsv`, built right after calibration) is read by every stage: blocks in
-`config.EXCLUDED_RECORDINGS`, plus, for the analyses of the responses only, blocks whose
-answered accuracy is not above chance, is significantly below chance, or that left ≥ 25 % of
-trials unanswered. Every stage prints its N and logs it to `qc/gate_ledger.tsv`. Below the
+(`derivatives/qc/gate.tsv`, built right after calibration) is read by every stage. It
+excludes from every analysis the blocks in `config.EXCLUDED_RECORDINGS` and blocks logged
+below 30 Hz or whose stimuli stayed on screen over twice their nominal 0.1 s. For the analyses
+of the responses only, it also excludes blocks with reversed answers or ≥ 25 % of trials
+unanswered, and all of a participant's blocks in a condition whose pooled answered accuracy is
+not above chance (one block alone is too small to judge). Every stage prints its N and logs it to `qc/gate_ledger.tsv`. Below the
 block level, a trial is dropped from every trial-based analysis when the head tracking,
 which drives the CAVE perspective, froze, jumped or dropped out from 0.3 s before its onset
 to 0.1 s after the stimulus went off (`presentation.py`); the gate's criteria use the

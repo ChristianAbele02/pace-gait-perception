@@ -5,8 +5,8 @@ planned runs (``config.PLANNED_RUNS``) and sums them up per participant x condit
 condition and overall, at block and at trial level. Every exclusion carries one label
 from a fixed set, so the counts compare across participants:
 
-  * blocks, automatic rule (``block_rules.py``): ``Chance-level accuracy``,
-    ``Too many timeouts``, ``Reversed responses``;
+  * blocks, automatic rule (``block_rules.py``): ``Low frame rate``,
+    ``Chance-level accuracy``, ``Too many timeouts``, ``Reversed responses``;
   * blocks, manual list (``config.EXCLUDED_RECORDINGS``, labelled in
     ``config.EXCLUSION_LABELS``): ``Technical failure``, ``No valid walking``,
     ``Manual exclusion`` (fallback);
@@ -14,8 +14,8 @@ from a fixed set, so the counts compare across participants:
   * planned blocks without a recording: ``Not recorded``, or ``Visit pending`` when the
     visit lies after the participant's last recorded one.
 
-A block failing several criteria gets the most specific as its label (manual, then
-reversal, timeouts, chance) and all of them in ``all_labels``. Trial counts are main
+A block failing several criteria gets the most specific as its label (manual, then frame
+rate, reversal, timeouts, chance) and all of them in ``all_labels``. Trial counts are main
 trials; the training trials that open every block are never analysed and are counted
 apart. Kept trials are the answered main trials of the blocks the behaviour scope keeps,
 whose presentation was valid; timeouts in those blocks, and their trials removed by the
@@ -53,9 +53,13 @@ except ImportError:
 
 MANUAL_LABELS = ("Technical failure", "No valid walking", "Manual exclusion")
 LEGEND = [
+    ("Low frame rate", "block",
+     "the head node logged below config.BLOCK_RULE_MIN_SAMPLING_HZ or kept the stimulus on "
+     "screen over config.BLOCK_RULE_MAX_STIM_FACTOR x its nominal time; out of the gait "
+     "analyses as well"),
     ("Chance-level accuracy", "block",
-     "accuracy over the answered trials not above 50 % (one-sided binomial, "
-     "config.BLOCK_RULE_ALPHA)"),
+     "the participant's accuracy over the answered trials of all their blocks in that "
+     "condition not above 50 % (one-sided binomial, config.BLOCK_RULE_ALPHA)"),
     ("Too many timeouts", "block",
      "at least config.BLOCK_RULE_MAX_TIMEOUT_FRACTION of the main trials unanswered"),
     ("Reversed responses", "block",
@@ -79,8 +83,8 @@ LEGEND = [
     ("Not recorded", "planned block", "a planned run with no recording"),
     ("Visit pending", "planned block", "a planned run of a visit not yet recorded"),
 ]
-_RULE_LABELS = (("reversal", "Reversed responses"), ("timeouts", "Too many timeouts"),
-                ("chance", "Chance-level accuracy"))
+_RULE_LABELS = (("frame rate", "Low frame rate"), ("reversal", "Reversed responses"),
+                ("timeouts", "Too many timeouts"), ("chance", "Chance-level accuracy"))
 
 
 def _rule_labels(rule: str) -> list[str]:
@@ -257,7 +261,8 @@ def markdown(units: pd.DataFrame, summary: pd.DataFrame, gate_id: str = "") -> s
           "the presentation rule; "
           f"{tot['calibrations_kept']}/{tot['calibrations_recorded']} calibrations kept; "
           f"{int(n_train)} training trials not analysed. The gait analyses keep "
-          f"{walk_gait}/{len(walk)} walking blocks: only manual exclusions apply there.", "",
+          f"{walk_gait}/{len(walk)} walking blocks: only manual exclusions and the "
+          "frame-rate criterion apply there.", "",
           "## By participant and condition", "",
           _md_table(summary[summary["level"] == "participant"], counts), "",
           "## By condition", "",

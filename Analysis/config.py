@@ -72,12 +72,15 @@ EXCLUSION_LABELS: dict[str, str] = {}
 #                   "reason": "The setup screen still held the previous participant's values."},
 SETUP_CORRECTIONS: dict[tuple[str, int], dict] = {}
 
-# Automatic block exclusion rule (block_rules.py): chance, reversal, timeouts, unreliable
-# calibration. Verdicts go to derivatives/qc/gate.tsv. The rule applies to behavioural
-# analyses only; gait analyses keep blocks answered at chance.
+# Automatic block exclusion rule (block_rules.py): frame rate, reversal and timeouts per
+# block, chance per participant x condition, unreliable calibration. Verdicts go to
+# derivatives/qc/gate.tsv. The frame-rate check applies to every analysis; the rest to
+# behavioural analyses only, so gait analyses keep blocks answered at chance.
 APPLY_BLOCK_RULE = True
 BLOCK_RULE_ALPHA = 0.05
 BLOCK_RULE_MAX_TIMEOUT_FRACTION = 0.25    # exclude blocks with >= 25 % unanswered
+BLOCK_RULE_MIN_SAMPLING_HZ = 30.0         # the head node normally runs at ~60 Hz
+BLOCK_RULE_MAX_STIM_FACTOR = 2.0          # exclude blocks with median on-screen time > 2 x nominal
 
 # Presentation rule (presentation.py): a trial is dropped from every trial-based analysis
 # when a head-tracking artefact overlaps its presentation window. The tracked head drives
