@@ -5,7 +5,7 @@ foot, but keeps them per block in .npz arrays. This stage writes them as one tab
 questions such as step-time asymmetry between the feet and its stability across blocks
 and visits:
 
-    derivatives/step_table/steps.tsv    one row per step, every walking block
+    derivatives/step_table/steps.tsv    one row per step, every walking block in the gait scope
     derivatives/step_table/steps.json   column descriptions and the settings used
 
 A step is the interval between two successive troughs. Steps longer than
@@ -169,8 +169,8 @@ def _sidecar(n_rows: int) -> dict:
     return {
         "Description": "Every step of every walking block, one row each, with the stance "
                        "foot and the head sway and bob over the step (Analysis/"
-                       "step_table.py). Blocks the gait scope excludes are listed when gait "
-                       "output exists for them; filter on 'gait'.",
+                       "step_table.py). Only blocks in the gait scope; filter on 'gait' "
+                       "for that decision.",
         "Settings": {"MaxStepRatio": gait_mod.MAX_STEP_RATIO,
                      "AmbiguousMargin": gait_mod.AMBIGUOUS_MARGIN,
                      "FootLabelsAnatomical": bool(getattr(C, "LATERAL_SIGN_VERIFIED", False)),

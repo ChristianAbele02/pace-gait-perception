@@ -542,6 +542,10 @@ DERIVATIVE_GROUPS = {
         "bayes_glmm": "Bayesian mixed models (NumPyro) of stride phase on accuracy and log "
                       "RT with standing as the control: shared-phase and per-person "
                       "modulation, Bayes factors, walking main effect (bayes_glmm.py).",
+        "threshold_phase": "Stride-phase modulation of the threshold: every walking trial "
+                           "weighted by the information it carries about a threshold "
+                           "shift, the information each block kept, and the "
+                           "information-weighted phase-agnostic test (threshold_phase.py).",
     },
     "Descriptive": {
         "descriptive": "Descriptive tables and overview figures of behaviour and data "
@@ -555,12 +559,29 @@ DERIVATIVE_GROUPS = {
         "onset_response": "Responses locked to stimulus onset (onset_response.py).",
         "gam_phase": "GAM fits and mutual information over stride phase (gam_phase.py).",
         "ddm_phase": "Drift-diffusion decomposition over stride phase (ddm_phase.py).",
-        "sdt": "Signal-detection measures over stride phase (sdt_phase.py).",
-        "stance_foot": "Stance-foot (foot A / foot B) contrast (stance_foot.py).",
+        "sdt": "Signal-detection measures over stride phase, at 2 and 4 cps and at the "
+               "stride rate (sdt_phase.py).",
+        "stance_foot": "Stance-foot (foot A / foot B) contrast on accuracy and RT, and the "
+                       "response direction by stance foot: criterion, tilt towards vs away "
+                       "(stance_foot.py).",
+        "roll_bias": "Head roll during presentation against the left/right response: "
+                     "equivalent tilt per participant and the population tests "
+                     "(roll_bias.py).",
+        "press_phase": "Button presses over the stride against reaction times shuffled "
+                       "within blocks (press_phase.py).",
+        "press_accuracy": "Accuracy against the stride phase at the press and at onset, "
+                          "with (RT, accuracy) pairs shuffled within blocks "
+                          "(press_accuracy.py).",
+        "group_curve": "The group-average-curve analysis with a per-frequency bin-resampling "
+                       "null run on our walking trials, its false-positive rate on null "
+                       "versions of our data, and our tests beside it (group_curve.py).",
     },
     "Exploratory: the walking itself": {
         "head_stability": "Head pitch against the vertical bob over the stride; head "
                           "fixation point and gaze compensation (head_stability.py).",
+        "head_kinematics": "Head translation and rotation over the stride by stance foot, "
+                           "with each participant's amplitude at 1 and 2 cps "
+                           "(head_kinematics.py).",
         "gait_dynamics": "Stride-time variability, DFA long-range correlations and local "
                          "dynamic stability per walking block (gait_dynamics.py).",
         "gait_prc": "Gait phase shifts after stimulus onsets and button presses (phase "
@@ -570,6 +591,13 @@ DERIVATIVE_GROUPS = {
     },
     "Planning and summary": {
         "planning": "Power and prevalence planning simulations (prevalence_planning.py).",
+        "calibration_cost": "What the calibration error costs: its structure, the "
+                            "information the blocks keep, and the power of the "
+                            "confirmatory and information-weighted tests at the planned "
+                            "N (calibration_cost.py).",
+        "shared_power": "Power of the phase-agnostic, common-phase and pooled tests for an "
+                        "oscillation shared by all participants, at the analysed and the "
+                        "planned sample (shared_power.py).",
         "summary": "Dataset summary tables, block inventory and the HTML report (report.py).",
         "sensitivity": "Sensitivity analyses run on demand, not by the pipeline: the "
                        "pipeline with and without the presentation rule, compared "

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -243,9 +244,8 @@ def _figure(label, res, out: Path):
     freq = res["freq_cps"]; w = 2 * np.pi * freq / 100.0
     xf = np.linspace(0, 100, 200)
     fig, ax = plt.subplots(1, 3, figsize=(14.5, 4.3))
-    fig.suptitle(f"Drift-diffusion decomposition — {S.nice_label(label)}  "
-                 f"({res['n_trials']} trials, fit @ {freq:.0f} cps; carrier: "
-                 f"{PARAM_LABEL[res['carrier']]})",
+    fig.suptitle(f"Drift-diffusion parameters over the stride — {S.nice_label(label)}  "
+                 f"({res['n_trials']} trials, fitted at {freq:.0f} cps)",
                  fontsize=12.5, fontweight="semibold", x=0.012, ha="left")
     cols = {"v": S.TEAL, "a": S.PURPLE, "Ter": S.ORANGE}
     for a_, p in zip(ax, PARAMS):
@@ -257,15 +257,20 @@ def _figure(label, res, out: Path):
             if fo:
                 a_.plot(xf, fo["mean"] + r["amp"] * np.cos(w * xf - r["psi_rad"]),
                         color=cols[p], lw=2.4,
-                        label=f"amp {r['amp']:.3g} (p={r['p_value']:.3f}"
+                        label=f"amplitude {r['amp']:.3g} (p = {r['p_value']:.3f}"
                               f"{' *' if r['significant'] else ''})")
+            lo, hi = a_.get_ylim()
+            a_.set_ylim(lo, hi + 0.25 * (hi - lo))   # headroom: the legend sits above the data
             a_.legend(loc="upper right", fontsize=8)
         a_.set_xlabel("stride phase (% stride)"); a_.set_ylabel(PARAM_LABEL[p])
         S.panel(a_, "abc"[PARAMS.index(p)], PARAM_LABEL[p], fontsize=9.5)
-    S.caption(fig, "Per-bin EZ-diffusion (Wagenmakers 2007); first-order Fourier at the "
-                   "gait frequency, phase-label permutation null. A drift (v) rhythm ⇒ "
-                   "sensory; boundary (a) ⇒ caution; non-decision (Ter) ⇒ motor. EXPLORATORY.")
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    S.caption(fig, f"Points: EZ-diffusion (Wagenmakers 2007) parameters estimated from the "
+                   f"accuracy and correct-RT distribution of each of {centers.size} phase bins. "
+                   f"Lines: cosine at {freq:.0f} cps; p from shuffling the trials' phases, "
+                   "uncorrected over the three parameters. A rhythm in drift (v) points to "
+                   "perception, in boundary (a) to caution, in non-decision time (Ter) to "
+                   "motor timing. Exploratory.")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.94))
     S.save(fig, out)
 
 
@@ -289,7 +294,9 @@ def main():
         pooled = _pool(subrecs)
         if pooled is None:
             continue
-        res = decompose(*pooled, rng=np.random.default_rng(abs(hash((sub, ses, "ddm"))) % 2**32))
+        # crc32, not hash(): str hashes are salted per process, so hash() gave a different
+        # permutation null (and p-value) on every run.
+        res = decompose(*pooled, rng=np.random.default_rng(zlib.crc32(f"{sub}_{ses}_ddm".encode())))
         if res is None:
             continue
         res.update({"sub": sub, "ses": ses})

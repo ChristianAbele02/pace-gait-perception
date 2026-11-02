@@ -70,9 +70,15 @@ secrets.*
 !/data/dataset_description.json
 !/data/participants.json
 !/data/task-ILL_stimulus.json
-# Raw rig logs dropped anywhere else by mistake
+# Raw rig logs dropped anywhere else by mistake (with and without the visit field)
 p[0-9][0-9]*-b[0-9]*-t[0-9]*.csv
 p[0-9][0-9]*-b[0-9]*-t[0-9]*.csv.gz
+p[0-9]*-v[0-9]*-b[0-9]*-t[0-9]*.csv
+p[0-9]*-v[0-9]*-b[0-9]*-t[0-9]*.csv.gz
+p[0-9]*-v[0-9]*-b[0-9]*-t[0-9]*_*.csv
+p[0-9]*-v[0-9]*-b[0-9]*-t[0-9]*_*.csv.gz
+# Rig-check recordings and results (rig_check.py): rig-specific, kept local
+/rigcheck/
 # Human-subjects paperwork must never enter the working tree; these are a backstop.
 *consent*
 participant_key*

@@ -578,11 +578,15 @@ def _panel(ax, m: dict, ylabel: str, color) -> None:
                 zorder=2, label=f"grid best {m['best_freq_cps']:.1f} cps: R² = {m['best_r2']:.2f}"
                                 + (" *" if m.get("significant_grid") else ""))
     ax.set_xlabel("% stride cycle"); ax.set_ylabel(ylabel)
+    lo, hi = ax.get_ylim()
+    ax.set_ylim(lo, hi + 0.3 * (hi - lo))            # headroom: the legend sits above the data
+    if ylabel.startswith("accuracy"):                 # no ticks past 100 % in that headroom
+        ax.set_yticks([t for t in ax.get_yticks() if -1e-9 <= t <= 1 + 1e-9])
     ax.legend(loc="upper right", fontsize=8)
 
 
-_MEASURE_PANELS = (("accuracy", "Accuracy", "hit rate"),
-                   ("reaction_time", "Reaction time", "log₁₀ reaction time"))
+_MEASURE_PANELS = (("accuracy", "Accuracy", "accuracy (P correct)"),
+                   ("reaction_time", "Reaction time", "reaction time (log₁₀ s)"))
 
 
 def _draw_measures(axes, measures, tags) -> None:
@@ -594,8 +598,10 @@ def _draw_measures(axes, measures, tags) -> None:
 
 
 def _draw_spectrum(ax, measures, tag: str, title: str = "R² spectrum") -> None:
-    """R² over the frequency grid; dotted = 95 % permutation CI, grey line = 2 cps."""
-    ax.axvline(2.0, color=S.GREY, ls="--", lw=0.9, zorder=0, label="2 cps (gait)")
+    """R² over the frequency grid; dotted = the 95th percentile of each measure's
+    max-R² permutation null (the grid test's threshold), the grey guide marks 2 cps,
+    once per step."""
+    ax.axvline(2.0, color=S.GREY, ls="--", lw=0.9, zorder=0, label="2 cps (once per step)")
     for key in ("accuracy", "reaction_time", "timeouts"):
         m = measures.get(key)
         if m:
@@ -606,7 +612,7 @@ def _draw_spectrum(ax, measures, tag: str, title: str = "R² spectrum") -> None:
     ax.set_xlim(0, 10)
     ax.set_ylim(0, ax.get_ylim()[1] * 1.25)          # room for the legend above the CI
     ax.legend(loc="upper right", ncol=2, fontsize=8)
-    S.panel(ax, tag, f"{title}  (dotted = 95% CI)", fontsize=10)
+    S.panel(ax, tag, f"{title}  (dotted = null 95th pct)", fontsize=10)
 
 
 def _draw_onsets(axL, axP, ev, g) -> None:
@@ -695,9 +701,10 @@ def _figure(rec, ev, measures, g, out: Path) -> None:
     _draw_spectrum(fig.add_subplot(gs[1, 1]), measures, "d")
     _draw_measures([fig.add_subplot(gs[2, 0]), fig.add_subplot(gs[2, 1])], measures, "ef")
     S.caption(fig, "Onsets are placed in the stride by trough interpolation (Davidson 2024). "
-                   "In e-f, solid = the confirmatory fit (2 or 4 cps, Holm), dashed = the best "
-                   "exploratory grid frequency; * = significant. R = mean resultant length "
-                   "(0 = uniform, 1 = concentrated).",
+                   "In e-f, points = bin mean ± SEM, solid = the confirmatory fit (2 or 4 cps, "
+                   "Holm), dashed = the best exploratory grid frequency; * = significant. In d, "
+                   "dotted = 95th percentile of the max-R² permutation null. R = mean "
+                   "resultant length (0 = uniform, 1 = concentrated).",
               wrap=170, y=0.03)
     fig.subplots_adjust(top=0.94, bottom=0.07, left=0.06, right=0.95)
     S.save(fig, out)
@@ -881,8 +888,11 @@ def _pooled_figure(results, n_part, n_trials) -> None:
                  fontsize=12, fontweight="semibold", x=0.012, ha="left")
     _draw_measures(ax[:2], results, "ab")
     _draw_spectrum(ax[2], results, "c")
-    S.caption(fig, "Trials concatenated across participants; ignores between-subject "
-                   "variance, so not a population test (see group_agnostic / GLMM).")
+    S.caption(fig, "Trials of all participants concatenated, so between-participant "
+                   "variance is ignored: a description, not a population test (that is the "
+                   "phase-agnostic test). a-b: bin mean ± SEM, solid = 2 or 4 cps fit (Holm), "
+                   "dashed = best grid frequency. c: dotted = 95th percentile of each "
+                   "measure's max-R² permutation null.")
     fig.tight_layout(rect=(0, 0.02, 1, 0.93))
     S.save(fig, bids_io.fig_dir("phase") / "pooled_phase.png")
 

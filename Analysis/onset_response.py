@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zlib
 from pathlib import Path
 
 import matplotlib
@@ -134,7 +135,9 @@ def _gait_arrays(rec):
     step_foot = g["step_foot"] if "step_foot" in g and np.size(g["step_foot"]) else None
     tg = g["t"] if "t" in g and np.size(g["t"]) else None
     cont = pa.continuous_phase(g)
-    stride_period = float(np.median(np.diff(troughs))) if np.size(troughs) > 1 else float("nan")
+    # Consecutive troughs bound a step; the stride the phase runs over is two of them.
+    stride_period = (2.0 * float(np.median(np.diff(troughs))) if np.size(troughs) > 1
+                     else float("nan"))
     return g, troughs, step_foot, tg, cont, stride_period
 
 
@@ -346,20 +349,34 @@ def _population_figure(rows, out: Path):
         axP.annotate("", xy=(ang, 1), xytext=(0, 0),
                      arrowprops=dict(arrowstyle="-|>", color=col, lw=2.6))
     axP.set_ylim(0, 1.15); axP.set_yticklabels([])
-    S.polar_panel(axP, "a", "Preferred phase (● acc, ■ respond)", fontsize=10)
-    # (b) distribution of Δψ
+    axP.plot([], [], "o", color=S.TEAL, label="accuracy peak")
+    axP.plot([], [], "s", color=S.ORANGE, label="P(respond) peak")
+    axP.legend(loc="upper left", bbox_to_anchor=(0.95, 1.12), fontsize=8)
+    S.polar_panel(axP, "a", "Peak phase per participant", fontsize=10)
+    # (b) Δψ distribution
     axH = fig.add_subplot(gs[0, 1])
     d = np.degrees([r["delta_psi_rad"] for r in rows])
     axH.hist(d, bins=np.linspace(-180, 180, 13), color=S.MIST, edgecolor="white")
     mu, R = _circ_mean([r["delta_psi_rad"] for r in rows])
-    axH.axvline(np.degrees(mu), color=S.INK, lw=2, label=f"circ mean {np.degrees(mu):+.0f}°")
-    axH.axvline(0, color=S.RED, ls=":", lw=1.2, label="no dissociation")
-    axH.set_xlabel("Δψ = respond − accuracy (deg)"); axH.set_ylabel("participants")
-    axH.legend(fontsize=8)
-    S.panel(axH, "b", "Sensory–motor phase gap", fontsize=10)
-    S.caption(fig, "Δψ clustered away from 0 (Rayleigh) ⇒ population-level sensory-vs-"
-                   "response phase dissociation.")
-    # tight_layout does not support polar axes; use explicit margins.
+    p = _rayleigh_p(R, len(rows))
+    axH.axvline(np.degrees(mu), color=S.INK, lw=2,
+                label=f"circular mean {np.degrees(mu):+.0f}° (R = {R:.2f}, Rayleigh p = {p:.2f})")
+    axH.axvline(0, color=S.RED, ls=":", lw=1.2, label="no gap")
+    axH.set_xlabel("Δψ = respond − accuracy peak (deg)"); axH.set_ylabel("participants")
+    axH.set_xlim(-180, 180); axH.set_xticks(np.arange(-180, 181, 90))
+    axH.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+    axH.set_ylim(0, axH.get_ylim()[1] * 1.35)
+    axH.legend(loc="upper left", fontsize=8)
+    S.panel(axH, "b", "Gap between the two peaks", fontsize=10)
+    S.caption(fig, "Fitted at each participant's stronger confirmatory frequency (2 or 4 cps), "
+                   "both curves referenced to stimulus onset; angles are on that frequency's "
+                   "cycle, 0° at the top, clockwise. A gap that clusters away from 0 would mean "
+                   "the response is timed by a different part of the stride than perception. "
+                   "P(respond) rests on the timeouts, so a participant without any "
+                   "has no peak and is left out; with few timeouts the peak is noisy.",
+              y=0.04)
+    # Polar axes are not tight_layout-compatible (matplotlib warns and the result is
+    # unreliable); lay this figure out with explicit margins instead.
     fig.subplots_adjust(left=0.05, right=0.97, top=0.82, bottom=0.15, wspace=0.3)
     S.save(fig, out)
 
@@ -385,7 +402,9 @@ def main():
         tr = _pool_subject(subrecs)
         if tr is None:
             continue
-        res = dissociation(tr, rng=np.random.default_rng(abs(hash((sub, ses))) % 2**32))
+        # crc32, not hash(): str hashes are salted per process, so hash() would give a
+        # different bootstrap (and CI) on every run.
+        res = dissociation(tr, rng=np.random.default_rng(zlib.crc32(f"{sub}_{ses}".encode())))
         if res is None:
             continue
         res.update({"sub": sub, "ses": ses})

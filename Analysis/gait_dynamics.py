@@ -294,70 +294,87 @@ def analyse_block(rec) -> dict | None:
 # Figures
 # ---------------------------------------------------------------------------
 def _figure(rows: list[dict], out: Path) -> None:
-    """Plot stride series, DFA fluctuation functions, alpha by block and divergence curves."""
+    """Plot stride series, DFA fluctuation functions, alpha per participant and divergence
+    curves. Blocks are drawn thin and grey; one example block (median alpha) is highlighted."""
     subs = sorted({r["sub"] for r in rows})
-    col = {s: S.CYCLE[i % len(S.CYCLE)] for i, s in enumerate(subs)}
+    with_alpha = [r for r in rows if isinstance(r.get("dfa_alpha"), (int, float))
+                  and np.isfinite(r["dfa_alpha"])]
+    ex = (sorted(with_alpha, key=lambda r: r["dfa_alpha"])[len(with_alpha) // 2]
+          if with_alpha else rows[0])
+    ex_lab = f"{S.nice_label(ex['sub'])} {ex['recording'][-6:]}"
     fig, ax = plt.subplots(2, 2, figsize=(11, 8))
-    # a: stride times of each participant's first block
+    # a: stride times of the example block
     a = ax[0, 0]
-    for s in subs:
-        r = next(r for r in rows if r["sub"] == s)
-        t0 = 0
-        for seg in r["_series"]:
-            a.plot(np.arange(t0, t0 + len(seg)), np.asarray(seg) * 1000, color=col[s], lw=0.8)
-            t0 += len(seg) + 5
-        a.plot([], [], color=col[s], label=f"{S.nice_label(s)} {r['recording'][-6:]}")
+    t0 = 0
+    for seg in ex["_series"]:
+        a.plot(np.arange(t0, t0 + len(seg)), np.asarray(seg) * 1000, color=S.BLUE, lw=0.8)
+        t0 += len(seg) + 5
     a.set_xlabel("stride number (gaps break the series)")
     a.set_ylabel("stride time (ms)")
-    a.legend(frameon=False, fontsize=8)
-    S.panel(a, "a", "Stride-interval series", fontsize=10)
+    S.panel(a, "a", f"Stride-interval series, example: {ex_lab}", fontsize=10)
     # b: DFA fluctuation functions
     a = ax[0, 1]
     for r in rows:
-        if r["_dfa"]:
+        if r["_dfa"] and r is not ex:
             sc, F = np.asarray(r["_dfa"]["scales"]), np.asarray(r["_dfa"]["F"])
-            a.loglog(sc, F, "o-", ms=3, lw=1, color=col[r["sub"]], alpha=0.8)
-    if rows and rows[0]["_dfa"]:
-        sc = np.asarray(rows[0]["_dfa"]["scales"], float)
-        ref = np.asarray(rows[0]["_dfa"]["F"], float)[0]
+            a.loglog(sc, F, "-", lw=0.8, color=S.MIST, zorder=1)
+    if ex["_dfa"]:
+        sc, F = np.asarray(ex["_dfa"]["scales"], float), np.asarray(ex["_dfa"]["F"], float)
+        a.loglog(sc, F, "o-", ms=3, lw=1.4, color=S.BLUE, zorder=3, label=f"example ({ex_lab})")
         for al, ls in ((0.5, ":"), (1.0, "--")):
-            a.loglog(sc, ref * (sc / sc[0]) ** al, color=S.GREY, ls=ls, lw=1,
-                     label=f"slope {al}")
+            a.loglog(sc, F[0] * (sc / sc[0]) ** al, color=S.INK, ls=ls, lw=1, zorder=2,
+                     label=f"slope {al:g}" + (" (uncorrelated)" if al == 0.5 else " (1/f)"))
+    a.loglog([], [], color=S.MIST, lw=0.8, label="other blocks")
     a.set_xlabel("box size (strides)")
     a.set_ylabel("fluctuation F(n) (s)")
-    a.legend(frameon=False, fontsize=8)
+    a.legend(loc="upper left", fontsize=8)
     S.panel(a, "b", "Detrended fluctuation analysis", fontsize=10)
-    # c: metrics by block order
+    # c: alpha per participant, each block against its shuffled control
     a = ax[1, 0]
-    for s in subs:
-        rs = sorted([r for r in rows if r["sub"] == s], key=lambda r: str(r["acq_time"]))
-        x = np.arange(1, len(rs) + 1)
-        a.plot(x, [r["dfa_alpha"] for r in rs], "o-", color=col[s], label=f"{S.nice_label(s)} α")
-        a.plot(x, [r["dfa_alpha_shuffled"] for r in rs], "x:", color=col[s], alpha=0.6)
-    a.axhline(0.5, color=S.GREY, lw=0.8)
-    a.set_xlabel("walking block (recording order)")
-    a.set_ylabel("DFA α  (x = shuffled control)")
-    a.legend(frameon=False, fontsize=8)
-    S.panel(a, "c", "Long-range correlation by block", fontsize=10)
+    for i, sub in enumerate(subs):
+        rs = [r for r in rows if r["sub"] == sub]
+        jit = np.linspace(-0.15, 0.15, len(rs)) if len(rs) > 1 else np.zeros(1)
+        num = lambda v: float(v) if isinstance(v, (int, float)) else np.nan
+        a.scatter(i + jit, [num(r["dfa_alpha_shuffled"]) for r in rs], marker="x", s=18,
+                  color=S.GREY, zorder=2, label="shuffled control" if i == 0 else None)
+        a.scatter(i + jit, [num(r["dfa_alpha"]) for r in rs], s=20, color=S.BLUE, zorder=3,
+                  label="observed" if i == 0 else None)
+    a.axhline(0.5, color=S.GREY, lw=0.8, ls=":")
+    a.set_xticks(range(len(subs))); a.set_xticklabels([s.replace("sub-", "") for s in subs])
+    a.set_xlabel("participant (one point per walking block)")
+    a.set_ylabel("DFA α")
+    a.legend(loc="upper right", fontsize=8)
+    S.panel(a, "c", "Long-range correlation", fontsize=10)
     # d: Lyapunov divergence curves
     a = ax[1, 1]
+    curves = []
     for r in rows:
         if r["_lyap_curve"]:
             c = np.asarray(r["_lyap_curve"], float)
-            a.plot(np.arange(c.size) / LYAP_POINTS, c - c[0], color=col[r["sub"]], lw=1,
-                   alpha=0.8)
+            curves.append(c - c[0])
+            a.plot(np.arange(c.size) / LYAP_POINTS, c - c[0], color=S.MIST, lw=0.8, zorder=1)
+    if curves:
+        n = min(len(c) for c in curves)
+        mu = np.mean([c[:n] for c in curves], axis=0)
+        a.plot(np.arange(n) / LYAP_POINTS, mu, color=S.BLUE, lw=2.2, zorder=3,
+               label="mean over blocks")
+    a.plot([], [], color=S.MIST, lw=0.8, label="one block")
     a.axvspan(LYAP_FIT[0] / LYAP_POINTS, LYAP_FIT[1] / LYAP_POINTS, color=S.MIST, alpha=0.3,
-              lw=0, label="fit range (λS)")
+              lw=0, label="fit range (λS = slope)")
     a.set_xlabel("time since neighbour pair (strides)")
     a.set_ylabel("mean log divergence (rel.)")
-    a.legend(frameon=False, fontsize=8)
+    a.legend(loc="lower right", fontsize=8)
     S.panel(a, "d", "Local dynamic stability", fontsize=10)
-    fig.suptitle("Stride-to-stride dynamics of CAVE treadmill walking (exploratory)",
+    fig.suptitle(f"Stride-to-stride dynamics of treadmill walking (exploratory), "
+                 f"{len(rows)} blocks of {len(subs)} participants",
                  fontsize=13, fontweight="semibold", x=0.012, ha="left")
     S.caption(fig, "Stride times from head-bob troughs; runs broken by tracking gaps are "
-                   "kept apart. DFA-1, boxes 16..N/4 strides (Peng 1995; Hausdorff 1995). "
-                   "λS: Rosenstein (1993) on time-normalised head velocity/acceleration, first "
-                   "half stride (Dingwell & Cusumano 2000).")
+                   "kept apart. b-c: DFA-1 over boxes of 16 to N/4 strides (Peng 1995; "
+                   "Hausdorff 1995); α 0.5 = no memory between strides, ~0.75-1 = healthy "
+                   "long-range correlation; the shuffled control destroys the order and "
+                   "should sit at 0.5. d: Rosenstein (1993) divergence of time-normalised "
+                   "head velocity/acceleration; λS = its slope over the first half stride "
+                   "(Dingwell & Cusumano 2000).")
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     S.save(fig, out)
 

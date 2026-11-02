@@ -287,8 +287,12 @@ def _rows():
         sub, ses = rec.sub, rec.ses
         g = gate.get(rec.label(), {})
         qc = _load(bids_io.deriv_dir("qc", sub, ses) / f"{rec.label()}_qc.json")
-        gait = _load(bids_io.deriv_dir("gait", sub, ses) / f"{rec.label()}_gait.json")
-        phase = _load(bids_io.deriv_dir("phase", sub, ses) / f"{rec.label()}_phase.json")
+        # a stage's result is shown only for blocks the gate lets into that stage, so an
+        # output left over from an earlier run for an excluded block is never reported
+        gait = (_load(bids_io.deriv_dir("gait", sub, ses) / f"{rec.label()}_gait.json")
+                if g.get("gait") == "include" else {})
+        phase = (_load(bids_io.deriv_dir("phase", sub, ses) / f"{rec.label()}_phase.json")
+                 if g.get("behaviour") == "include" else {})
         beh = qc.get("behaviour", {})
         tim = qc.get("timing", {})
         ori = qc.get("tracking", {}).get("orientation_verdict", {})
@@ -353,10 +357,14 @@ def _figures_html() -> str:
         return C.DERIV_DIR.joinpath(stage, *parts, "figures", name)
 
     blocks = []
-    # one sheet per block and stage
+    # one sheet per block and stage; a stage's sheet only for blocks the gate lets into it
+    gate = _gate_rows()
+    scope = {"qc": None, "gait": "gait", "phase": "behaviour", "clocktime": "behaviour"}
     for rec in bids_io.find_recordings(include_excluded=True):
+        g = gate.get(rec.label(), {})
         present = [f for f in (fig(stage, f"{rec.label()}_{stage}.png", rec.sub, rec.ses)
-                               for stage in ("qc", "gait", "phase", "clocktime"))
+                               for stage, sc in scope.items()
+                               if sc is None or g.get(sc) == "include")
                    if f.exists()]
         if present:
             blocks.append(f"<h3>{rec.label()} ({rec.condition})</h3>"
@@ -398,8 +406,16 @@ def _figures_html() -> str:
             ("Onset vs response locus", fig("onset_response", "onset_response_population.png")),
             ("Stance-foot contrast (which foot is down)",
              fig("stance_foot", "stance_foot_population.png")),
+            ("Response direction by stance foot",
+             fig("stance_foot", "stance_foot_response_population.png")),
             ("Sensitivity vs criterion over the stride (SDT decomposition)",
              fig("sdt", "sdt_population.png")),
+            ("Head roll and the left/right response", fig("roll_bias", "roll_bias_population.png")),
+            ("Button presses over the stride", fig("press_phase", "press_phase_population.png")),
+            ("Accuracy and the stride phase at the press",
+             fig("press_accuracy", "press_accuracy_population.png")),
+            ("Group-average-curve analysis, calibrated on our design",
+             fig("group_curve", "group_curve.png")),
             ("Cyclic-spline GAM + mutual information", fig("gam_phase", "gam_phase.png")),
             ("Drift-diffusion decomposition", fig("ddm_phase", "ddm_phase_pooled.png")),
         ]),
@@ -408,11 +424,14 @@ def _figures_html() -> str:
              fig("gait_phase_methods", "phase_methods.png")),
             ("Head stabilisation over the stride", fig("head_stability", "head_stability_profiles.png")),
             ("Head stabilisation summary", fig("head_stability", "head_stability_summary.png")),
+            ("Head kinematics over the stride", fig("head_kinematics", "head_kinematics.png")),
             ("Stride-to-stride gait dynamics", fig("gait_dynamics", "gait_dynamics.png")),
             ("Gait phase-response curve", fig("gait_prc", "gait_prc.png")),
         ]),
         ("Planning and calibration", [
             ("Prevalence precision vs N", fig("planning", "prevalence_precision_vs_N.png")),
+            ("Power for a shared stride-phase oscillation",
+             fig("shared_power", "shared_power.png")),
             ("Calibration refit (simulation)",
              fig("calibration", "calibration_refit_simulation.png")),
         ]),

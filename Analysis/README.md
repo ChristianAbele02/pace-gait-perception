@@ -25,9 +25,13 @@ data/derivatives/                                README.md indexes the folders b
   ├── trial_table/ step_table/                     trials.tsv, steps.tsv: long tables for analyses outside the pipeline
   ├── phase/ population/ conditions/ clocktime/    confirmatory and secondary tests
   ├── descriptive/                                 descriptive overview
-  ├── onset_response/ gam_phase/ ddm_phase/ sdt/ stance_foot/        exploratory: responses
-  ├── head_stability/ gait_dynamics/ gait_prc/ gait_phase_methods/   exploratory: walking
-  ├── planning/ summary/                           planning; report.html, inventory, provenance
+  ├── calibration_transfer/ threshold_phase/       the calibrated operating point; the threshold-scale test
+  ├── onset_response/ press_phase/ gam_phase/ ddm_phase/ sdt/        exploratory: responses
+  │   stance_foot/ roll_bias/ press_accuracy/ group_curve/
+  ├── head_stability/ head_kinematics/ gait_dynamics/ gait_prc/      exploratory: walking
+  │   gait_phase_methods/
+  ├── planning/ calibration_cost/ shared_power/    planning and power
+  ├── summary/                                     report.html, inventory, provenance
   ├── sensitivity/presentation_rule/               the pipeline with vs without the presentation rule (on demand)
   └── qc/  gate.tsv (exclusion gate)  gate_ledger.tsv (N per stage)
            presentation_flags.tsv (trials shown during a head-tracking artefact)
@@ -244,7 +248,7 @@ and differ between any two runs; their rows are marked.
 
 ```bash
 pip install -r Analysis/requirements.txt
-python -m Analysis.run_pipeline          # all 30 stages, in dependency order
+python -m Analysis.run_pipeline          # all 38 stages, in dependency order
 python -m Analysis.run_pipeline --no-cache   # the same, recomputing everything
 
 # or stage by stage:
@@ -265,13 +269,26 @@ python -m Analysis.population            # prevalence & phase + stride-duration 
 python -m Analysis.clocktime_control     # clock-time (Hz) vs stride (cps) control
 python -m Analysis.conditions            # standing vs walking
 python -m Analysis.threshold_by_condition  # H5: per-condition 75 % threshold, paired
-python -m Analysis.descriptive           # exploratory dataset overview
+python -m Analysis.calibration_transfer  # calibrated vs block threshold
+python -m Analysis.threshold_phase       # SECONDARY: stride phase on the threshold scale
+python -m Analysis.calibration_cost      # what the calibration error costs in power
+python -m Analysis.shared_power          # power for an oscillation shared by all participants
+python -m Analysis.descriptive           # dataset overview + the three sample figures
 python -m Analysis.onset_response        # EXPLORATORY: onset vs response locus
+python -m Analysis.press_phase           # EXPLORATORY: button presses over the stride
+python -m Analysis.press_accuracy        # EXPLORATORY: accuracy vs the stride phase at the press
+python -m Analysis.bayes_glmm --lock press  # EXPLORATORY: the accuracy model at the press phase
+python -m Analysis.group_curve           # EXPLORATORY: group-average-curve analysis, calibrated
 python -m Analysis.gam_phase             # EXPLORATORY: cyclic-spline GAM + mutual information
 python -m Analysis.ddm_phase             # EXPLORATORY: EZ-diffusion decomposition
-python -m Analysis.stance_foot           # EXPLORATORY: stance-foot (left/right) contrast
+python -m Analysis.stance_foot           # EXPLORATORY: stance-foot contrast + response direction
 python -m Analysis.sdt_phase             # EXPLORATORY: d-prime vs criterion decomposition
+python -m Analysis.roll_bias             # EXPLORATORY: head roll vs the left/right response
+python -m Analysis.head_kinematics       # EXPLORATORY: head motion over the stride
 python -m Analysis.report                # summary TSV + HTML report
+
+# once per rig, not part of the pipeline: measure the sign conventions (§ Stance-foot identity)
+python -m Analysis.rig_check             # reads scripted-performer logs from rigcheck/
 
 # on demand, after a full run: the pipeline again without the presentation rule, compared
 python -m Analysis.presentation_comparison   # writes sensitivity/presentation_rule/
@@ -286,10 +303,12 @@ python -m pytest Analysis/tests -q       # inject-and-recover validation suite
 ruff check Analysis/                     # lint gate (F + E9); CI runs this
 ```
 
-**Skipping unchanged work** (`stage_cache.py`). Two steps reuse earlier work when nothing
+**Skipping unchanged work** (`stage_cache.py`). Three steps reuse earlier work when nothing
 they depend on has changed: bidsify does not rewrite a `_motion.tsv` whose table is
-identical by value, and `bayes_glmm` reuses its fit when the trial arrays, its code, the
-priors, the sampler settings and the library versions are all the same. A step is reused
+identical by value, `bayes_glmm` reuses each fit (onset- and press-locked) when the trial
+arrays, its code, the priors, the sampler settings and the library versions are all the
+same, and `calibration_cost` reuses its simulation while the transfer ratios and its code
+are unchanged. A step is reused
 only when that content fingerprint matches AND every output it recorded is still on disk,
 unmodified; otherwise it is recomputed. Nothing is ever deleted by the cache. Its manifests
 live in `.pipeline_cache/` next to `data/` (git-ignored; deleting it costs one full run).
@@ -322,22 +341,30 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `group_agnostic.py` | **THE CONFIRMATORY POPULATION TEST.** `S(f) = Σᵢ\|zᵢ\|²/sᵢ²` at 2 and 4 cps, Holm-corrected, **studentised** by each participant's own null so no one dominates the sum by being noisy (under H0 each contributes 1, so `S ≈ n`). Runs on the **primary** measure (accuracy) plus two secondary ones (reaction time, timeout rate); only accuracy carries a family-wise claim. Invariant to rotating any individual `zᵢ`, so it detects oscillation whatever phase each participant prefers — the point at Davidson's coherence of R = 0.33, where it reaches 91 % power at N = 12 × 1440 against a common-phase contrast's 15 %. Its null reuses `phase_analysis`'s own permutations, so it is exact by construction. |
 | `common_phase.py` | **THE COMMON-PHASE POPULATION TEST (secondary).** One-sample **Hotelling T²** on the per-participant (cos, sin) coefficients at 2 and 4 cps, Holm. Exact in small samples; measured FPR **0.05** in the idiosyncratic-phase case where the old GLMM Wald scored **0.60**; bit-identical to the statistic `davidson_power` simulated, so the pipeline now agrees with its own power analysis. Carries the locomotion-specificity test as a **paired** T² on walking − standing. Secondary by design: at R = 0.33 the vector mean cancels most of the effect. |
 | `glmm.py` | trial-level hierarchical GLMM (participant random intercept + random cos/sin slopes). **Descriptive only and now p-value-free** — amplitude, preferred phase, and the condition and difficulty breakdowns. Its variational Wald was removed rather than annotated (§4d); the same model with valid uncertainty, RT and a standing control is `bayes_glmm.py`. |
-| `bayes_glmm.py` | **Bayesian mixed models (secondary), NumPyro NUTS.** One model per measure — accuracy (Bernoulli-logit, answered trials) and log RT (Student-t) — over walking and standing trials: participant random intercept and walking slope, difficulty, and per condition the 2 and 4 cps cos/sin terms with a population mean (shared phase) and isotropic participant slopes (per-person modulation at their own phase). Standing trials carry a virtual stride phase (onset on a clock at the participant's walking stride time, seeded random start), which keeps the stimulus timing and reads no motion signal; a head-sway phase is not a clean null, because its zero-phase filter lets stimulus- and response-evoked head movement leak back to the onset. Reports amplitudes in hit-rate and RT units with 95 % HDIs, Savage–Dickey Bayes factors for the shared phase (2-D) and the per-person scale (boundary, reflected KDE), the walking-minus-standing contrasts and the walking main effect. Phase priors are anchored on Davidson's per-participant amplitude (N(0, 0.2) logit per component, τ ~ HalfNormal(0.2)). `--validate` checks the Bayes factors by simulation on the real design: how often BF10 > 3 appears with no effect, and how often a Davidson-sized (and a three times larger) effect at idiosyncratic phases is detected. |
+| `bayes_glmm.py` | **Bayesian mixed models (secondary), NumPyro NUTS.** One model per measure — accuracy (Bernoulli-logit, answered trials) and log RT (Student-t) — over walking and standing trials: participant random intercept and walking slope, difficulty, and per condition the 2 and 4 cps cos/sin terms with a population mean (shared phase) and isotropic participant slopes (per-person modulation at their own phase). Standing trials carry a virtual stride phase (onset on a clock at the participant's walking stride time, seeded random start), which keeps the stimulus timing and reads no motion signal; a head-sway phase is not a clean null, because its zero-phase filter lets stimulus- and response-evoked head movement leak back to the onset. Reports amplitudes in hit-rate and RT units with 95 % HDIs, Savage–Dickey Bayes factors for the shared phase (2-D) and the per-person scale (boundary, reflected KDE), the walking-minus-standing contrasts and the walking main effect. Phase priors are anchored on Davidson's per-participant amplitude (N(0, 0.2) logit per component, τ ~ HalfNormal(0.2)). `--validate` checks the Bayes factors by simulation on the real design: how often BF10 > 3 appears with no effect, and how often a Davidson-sized (and a three times larger) effect at idiosyncratic phases is detected. `--lock press` fits the accuracy model with the phase read at the press (onset + RT; standing on the same virtual clock), answered trials with RT ≥ 150 ms, outputs `bayes_glmm_press.*` (exploratory, §4g). |
 | `power.py` | per-participant detection power by Monte-Carlo over the same confirmatory test, disk-cached. |
-| `population.py` | grouped R² spectra, Bayesian prevalence de-biased with the measured sensitivity (Ince 2022) plus an identifiability guard, preferred-phase polar + Rayleigh, and the stride-duration controls (Supp 7/8). |
+| `population.py` | per-participant R² spectra coloured by their confirmatory verdict, Bayesian prevalence de-biased with the measured sensitivity (Ince 2022) plus an identifiability guard, every participant's 2-cps cosine and its peak within the step (polar, with a Rayleigh test over all participants), and the stride-duration controls (Supp 7/8). |
 | `clocktime_control.py` | is the oscillation locked to the stride or to any clock? Folds onsets onto a fixed temporal period (Hz) with the same machinery (Supp 5/6). |
 | `conditions.py` | standing vs walking hit rate (answered trials) / RT / by-difficulty. |
 | `threshold_by_condition.py` | H5 — fits a fixed-slope Weibull to each condition's experiment trials, reads off the 75 % threshold and compares the two in a paired test. Slope and lapse come from `calibration_refit`'s per-condition joint fit (three tilt levels cannot identify a slope), so "walking shifts threshold, not slope" is tested rather than assumed. |
 | `calibration_transfer.py` | whether each calibrated threshold holds in the blocks run on it. Per calibration (participant × condition × visit, behaviour-gate blocks pooled), the blocks' own 75 % threshold (QUEST+ slope, lapse and guess fixed, profile 95 % CI) against the calibrated one, with a simulated sampling null at the blocks' tilts; counts the calibrations outside their null range (test against 5 %) and estimates the calibration error from the excess spread of log(block / calibrated). A fit at ceiling or chance is a bound only and stays out of the spread. Figure: accuracy at the calibrated tilt for every block, and calibrated vs block threshold. |
-| `descriptive.py` | exploratory dataset overview with Wilson CIs: behaviour, gait and tracking quality. No inferential stats. |
+| `threshold_phase.py` | SECONDARY: the stride-phase test on the threshold scale. Each walking block's threshold is fitted with the QUEST+ slope, lapse and guess fixed; each trial gets its expected accuracy and the information it carries about a threshold shift relative to a trial at 75 %, and enters as its weighted contribution through the same binned fit and studentised phase-agnostic sum, Holm over 2 and 4 cps. Permutations move values, never phases, so the test stays exact. Coefficients convert to a modulation of ln threshold (see The calibration error and what it costs). |
+| `calibration_cost.py` | what the calibration error costs: its structure from `calibration_transfer`'s ratios, the information retained as a function of its spread and shift, and the power of the confirmatory and information-weighted tests simulated with the `davidson_power` simulator for perfect calibration, the observed walking ratios and a stricter stopping rule. Cached (`stage_cache`). |
+| `shared_power.py` | power for an oscillation shared by all participants (same amplitude and phase at 2 cps), the kind a group-average curve shows: phase-agnostic S, common-phase Hotelling T² and the pooled-trial test, at each participant's own trial count and at N = 12 and 20 × 1440 (§4h). |
+| `descriptive.py` | exploratory dataset overview with Wilson CIs: behaviour, gait and tracking quality. No inferential stats. Also three manuscript figures that introduce a sample (183 mm, PNG + PDF), read from the trial table and the calibration-transfer table: `sample_overview` (trials kept, calibrated thresholds, strides per participant), `sample_accuracy` (accuracy per participant; accuracy at 0.76, 1 and 1.26 × the calibrated threshold against the calibration model; response bias) and `sample_reaction_times` (RT distributions, medians, RT for correct vs wrong answers by difficulty, timeouts). |
 | `onset_response.py` | EXPLORATORY — stimulus-onset vs response-onset locus. Both re-expressed onset-referenced; the dissociation is the circular Δψ with a trial-bootstrap CI. |
 | `gam_phase.py` | EXPLORATORY — cyclic-spline GAM (flags non-sinusoidal structure via AIC against a single cosine) plus mutual information as a model-free omnibus. |
 | `ddm_phase.py` | EXPLORATORY — per-bin EZ-diffusion maps (accuracy, RT) → (v, a, Ter) to identify the carrier: sensory drift, caution, or motor timing. A screening decomposition. |
-| `stance_foot.py` | EXPLORATORY — does performance depend on **which foot is in stance**? A one-d.o.f. contrast on the labels `gait.label_steps` provides, tested against a **stride-flip permutation null** (§4a). Population level mirrors `group_agnostic`: a direction-agnostic `S = Σ zᵢ²` (primary, valid even before the rig's sway-sign convention is verified) and a direction-specific `T = mean zᵢ` (secondary, provisional until it is). |
-| `sdt_phase.py` | EXPLORATORY — **is an accuracy oscillation sensory or decisional?** Phase-resolved `d'` and criterion `c` from `stimulus_side` × `response` (§4c), same 2/4 cps confirmatory machinery, permutation null that shuffles the (stimulus, response) pair. Population level reuses `group_agnostic.agnostic_test` verbatim. |
+| `stance_foot.py` | EXPLORATORY — does performance depend on **which foot is in stance**? A one-d.o.f. contrast on the labels `gait.label_steps` provides, tested against a **stride-flip permutation null** (§4a). Population level mirrors `group_agnostic`: a direction-agnostic `S = Σ zᵢ²` (primary, valid whatever the sway-sign convention) and a direction-specific `T = mean zᵢ` (an anatomical claim once the rig check has set the convention). Also the response direction by stance foot: the criterion contrast and tilt towards vs away from the stance foot, on accuracy and RT. |
+| `sdt_phase.py` | EXPLORATORY — **is an accuracy oscillation sensory or decisional?** Phase-resolved `d'` and criterion `c` from `stimulus_side` × `response` (§4c), same 2/4 cps confirmatory machinery, permutation null that shuffles the (stimulus, response) pair. Population level reuses `group_agnostic.agnostic_test` verbatim. A separate test at the stride rate (1 cps), where a bias that flips with the stance foot appears, with a common-phase Hotelling test beside S. |
+| `roll_bias.py` | EXPLORATORY — does head roll during presentation bias the left/right answer? The Gabor follows the head's position but not its rotation, so a roll tilts it on the retina. Per participant a logistic model of "said right" on block, signed tilt and the roll during presentation, with stride-phase, time-in-block and gait-band controls, against a residual-permutation null; the roll effect is expressed as an equivalent tilt (deg per deg of roll). Population S (any direction) and T (common direction) (§4f). |
+| `press_phase.py` | EXPLORATORY — do the button presses cluster at a stride phase beyond what the onset timing and the RT distribution produce? Press-phase Fourier coefficients at 1, 2 and 4 cps against RTs shuffled within blocks, centred on that null; population phase-agnostic S and common-phase Hotelling T², Holm over 2 and 4 cps (§4g). |
+| `press_accuracy.py` | EXPLORATORY — does accuracy follow the stride phase at the press rather than at onset? Fourier coefficient of the centred, difficulty-adjusted accuracy at 2 and 4 cps against (RT, accuracy) pairs shuffled within blocks and re-added to the fixed onsets; the same estimator locked to onset beside it, and the RT attenuation between the two; population S and T², Holm over 2 and 4 cps, per locking (§4g). |
+| `group_curve.py` | EXPLORATORY comparison — the group-average-curve analysis common in the walking literature: one cosine per grid frequency on the 20-bin group mean, each frequency against its own bin-resampling 95th percentile, a significant fit in 1.5–2.5 cps read as a step-rate effect, and the individual-level version at 2 cps. Calibrated on null versions of the data and set beside this pipeline's tests (§4i). |
 | `phaser.py` | multi-channel stride phase (vertical bob + lateral sway + head roll; protophase-corrected, precision-weighted), after Revzen & Guckenheimer (2008). Selectable with `PHASE_METHOD = "phaser"`; not recommended on current data (§5). |
 | `gait_phase_methods.py` | EXPLORATORY — scores trough, Hilbert and multi-channel phase on head signals none of them uses (§5). |
-| `head_stability.py` | EXPLORATORY — head pitch against the vertical bob over the stride: step-band coupling, head fixation point, gaze compensation at the 2 m stimulus distance (§5). |
+| `head_stability.py` | EXPLORATORY — head pitch against the vertical bob over the stride: step-band coupling, pitch lag, the fixation point its size implies and the in-phase fixation point, the offset between the two position streams, and gaze compensation at the 2 m stimulus distance (§5). |
+| `head_kinematics.py` | EXPLORATORY — head translation (vertical, lateral, fore-aft) and rotation (roll, pitch, yaw relative to the block's mean pose, signs as measured by the rig check) over the stride, the right foot's step first, with each participant's amplitude and peak at 1 and 2 cps (§5). |
 | `gait_dynamics.py` | EXPLORATORY — stride-time CV, DFA long-range correlations and short-term local dynamic stability per walking block (§5). |
 | `gait_prc.py` | EXPLORATORY — do stimulus onsets or button presses shift the gait rhythm? Phase response curve against a frame-locked random-time null (§5). |
 | `block_rules.py` | builds the exclusion gate `qc/gate.tsv`: frame rate, reversal and timeouts per block, chance per participant × condition over their blocks (both on the presentation-valid trials), unreliable calibrations out of the refit, plus the manual list; with a behaviour and a gait scope (the frame-rate criterion and the manual list apply to both); read by every analysis stage, which logs its N to `qc/gate_ledger.tsv` (see Missing and partial data). |
@@ -347,9 +374,10 @@ versions, config snapshot) so each figure is traceable to exact code and paramet
 | `data_quality.py` | data-quality overview, run by `report.py`: blocks and trials recorded, kept and excluded per participant x condition, per condition and in total, each exclusion with a standard label (low frame rate, chance-level accuracy, too many timeouts, reversed responses, technical failure, no valid walking, unreliable calibration; missing blocks as not recorded or visit pending; trials dropped by the presentation rule as presentation artefacts). Writes `summary/data_quality.md` and two TSVs; manual exclusions are labelled in `config.EXCLUSION_LABELS`. |
 | `prevalence_planning.py` | prevalence-precision (HPDI width) vs N planning simulation. |
 | `simulate_participants.py` | N synthetic participants in the two-visit topology into a separate `bids_sim/`, run through the whole pipeline. Trials come from a Davidson-calibrated generative drift-diffusion model; the injected truth is written to `sim_truth.json`. |
-| `tests/test_pipeline.py` | inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |
+| `tests/test_pipeline.py` | 122 inject-and-recover tests for the Fourier test, GLMM, Hilbert-vs-trough agreement, calibration refit, prevalence guard, spike cleaning, BIDS naming, the confirmatory phase-agnostic test, and each exploratory add-on. |
+| `rig_check.py` | run on its own, once per rig, not by the pipeline. Measures the rig's sign conventions (which way is right and forward; positive roll, pitch and yaw) from a scripted performer's standing and walking recordings in `rigcheck/`, through the dataset's own conversion and the analysis code that uses each convention. Writes `rigcheck/rig_check.json` and a figure; the `config` sign flags record the outcome. |
 | `gabor_preview.py` | stimulus design aid (not part of the pipeline): renders the Gabor at true visual angle and sweeps each parameter. |
-| `run_pipeline.py` | orchestrates all 30 stages, prints the time each took, and lists the figures produced; `--no-cache` recomputes everything. |
+| `run_pipeline.py` | orchestrates all 38 stages, prints the time each took, and lists the figures produced; `--no-cache` recomputes everything. |
 | `stage_cache.py` | content-fingerprint cache that lets a step skip work whose inputs, code and outputs are unchanged (see Run). |
 | `davidson_power/` | effect size measured from Davidson's raw data + power simulations of this pipeline's own tests. See [its README](davidson_power/README.md). |
 
@@ -389,18 +417,21 @@ once per stride, whereas anything riding on the vertical bob oscillates twice. S
 frequency rather than on agreement with sway is what keeps the cross-check honest — the
 criterion never looks at the sway signal's *phase*, which is what carries the label.
 
-### The left/right naming is gated
+### Left and right are measured on the rig
 
-`head_local_pos_x` is `trackingOrigin.InverseTransformPoint(head.position).x`. Unity is
-left-handed, so for a participant facing +z, +x is their right — and since the head leans
-toward the stance limb, positive sway means right stance. **That chain is a geometric
-assumption about the rig, not a measurement**, so `config.LATERAL_SIGN_VERIFIED` gates it:
+`head_local_pos_x` is `trackingOrigin.InverseTransformPoint(head.position).x`, and the head
+leans toward the stance limb, so the side of the sway names the foot. Which side +x is
+depends on how the rig is mounted, so it is measured with `rig_check.py`: a scripted
+performer shifts their weight, stands on one leg and starts a walk with a known foot, nods,
+tilts and turns the head, and the script reports each convention through the dataset's own
+conversion. On this rig +x is the participant's right, so `config.LATERAL_SIGN_VERIFIED` is
+set and the feet are named right / left; the direction-specific stance-foot test is then an
+anatomical claim. The same check fixes the signs of head roll, pitch and yaw
+(`HEAD_ROLL_SIGN_VERIFIED`, `HEAD_PITCH_SIGN_VERIFIED`).
 
-- **`False` (current).** Steps are still separated reliably and named **"foot A" / "foot B"**.
-  Everything that needs only *the two feet told apart* stays valid — the stride origin, the
-  odd harmonics, and the **direction-agnostic** population test.
-- **`True`.** Labels are named left/right and the direction-specific test becomes an
-  anatomical claim.
+On a rig without the check, set the flags to False. The feet are then named "foot A" /
+"foot B" (A = the +x-sway foot), and everything that needs only the two feet told apart
+stays valid: the stride origin, the odd harmonics and the direction-agnostic population test.
 
 The three decoder constants are set together to give **one statable guarantee**, asserted
 numerically in `test_no_single_step_can_break_the_alternation` so a future tweak cannot
@@ -413,9 +444,7 @@ silently void it:
   everything after it, pays that penalty *once* (7.6), and is then supported by every
   subsequent step.
 
-**To verify:** record one walk-in where the operator calls the first step, run
-`python -m Analysis.gait`, and read the first shaded step off panel (e) of
-the block's `*_gait.png` sheet. If it is inverted, flip `LATERAL_POSITIVE_IS_RIGHT` — never a sign
+If a later check finds the sway inverted, flip `LATERAL_POSITIVE_IS_RIGHT`, never a sign
 somewhere in the analysis code.
 
 Per-recording diagnostics (`*_gait.json`, and the `foot_label_verdict` gate): raw vs decoded
@@ -621,10 +650,128 @@ HARD trials at 1440 walking trials — too few for a 2-cps fit. The weighting th
 untestable, and H1 is the study. `glmm.fit_difficulty_model` reports amplitude per level as
 description, with the trial count printed above each bar.
 
+### 4f. Head roll and the left/right response (`roll_bias.py`, EXPLORATORY)
+
+The Gabor plane follows the head's position but not its rotation, so the grating stays
+upright in the room. A head roll of r degrees rotates it on the retina by r, less the ocular
+counter-roll, which compensates only part of a dynamic roll (Collewijn et al., 1985). Walking
+rolls the head by about a degree once per stride, the size of near-threshold tilts, so the
+retinal-image account of a stride-phase effect (Matthis et al., 2022) cannot be set aside as
+it can for large tilts.
+
+A retinal rotation adds a signed offset to the tilt that is seen, which moves the decision
+rather than the sensitivity, so the test is on the response. Per participant, over the
+pooled walking trials (answered, phased, presentation-valid):
+
+```
+logit P(say right) = block_b + β_tilt · tilt + β_roll · roll
+```
+
+`tilt` is signed (+ right, degrees); `roll` is the head roll averaged over the measured
+on-screen time, relative to the block's mean pose and linearly detrended. The effect is the
+equivalent tilt `g = β_roll / β_tilt`, degrees of stimulus tilt per degree of roll: `|g| = 1`
+is a roll that reaches the decision whole, `g = 0` full compensation. An adjusted model adds
+cos/sin at 1 and 2 cps of stride phase and a quadratic trend within each block; a fast model
+band-passes the roll to 0.3–5 Hz. The null is a permutation of residuals (Kennedy, 1995):
+roll is regressed on the nuisance columns and its residual permuted within blocks, 1000 times.
+Per participant `z = β_roll / SD(null)`; population S = Σz² and T = mean z as in
+`stance_foot.population_test`.
+
+### 4g. Button presses, and accuracy at the press (`press_phase.py`, `press_accuracy.py`, EXPLORATORY)
+
+**Do the presses cluster in the stride?** A press histogram is the onset distribution
+convolved with the RT spread, so it cannot show on its own whether presses are timed by the
+gait. The null keeps both and breaks their pairing: within each block the RTs of the answered
+trials (> 150 ms) are shuffled across trials, added to the fixed onsets, and the press phases
+recomputed with the block's gait. The statistic is the press-phase Fourier coefficient
+`z_k = mean exp(i 2π k phase / 100)` at 1, 2 and 4 cps, centred on its null mean; `2|z_k|` is
+the depth of the press-density modulation. Per participant 2 and 4 cps with Holm, 1 cps
+separately; population S and Hotelling T², each Holm over 2 and 4 cps.
+
+**Does accuracy follow the phase at the press?** The confirmatory test reads the phase at
+onset, where the target is sampled. A Rayleigh test on the press phases of the correct trials
+cannot ask about the press instead, because all presses cluster and the correct ones with
+them. The quantity is where correct and wrong presses fall relative to each other: the
+Fourier coefficient of the centred accuracy, `z_k = mean (y − ȳ) exp(i 2π k phase / 100)`,
+whose `2|z_k|` is the modulation in hit-rate units. Press phase is onset + RT and errors are
+slower, so the null shuffles each trial's (RT, accuracy) pair together within its block and
+re-adds the RT to the fixed onsets. The same estimator locked to onset runs on the same
+trials. An effect locked to one time point reaches the other attenuated by
+`|mean exp(i 2π k RT / stride)|`, reported per participant, so the two lockings test two loci.
+`bayes_glmm --lock press` fits the trial-level accuracy model at the press phase (accuracy
+only: RT cannot be regressed on a phase built from it).
+
+### 4h. Power for a shared oscillation (`shared_power.py`)
+
+The power analysis assumes idiosyncratic phases. A group-average curve shows only what
+participants share, so this stage asks how large a shared 2 cps oscillation (same amplitude
+and phase in everyone) the analysed sample would catch. It simulates each participant at
+their own answered walking trials with the `davidson_power` simulator and runs the
+phase-agnostic S, the common-phase Hotelling T² and the pooled-trial test, each Holm over 2
+and 4 cps. Output: power against the shared amplitude and the amplitude detected with 80 %
+power, for the analysed sample and for N = 12 and 20 × 1440. Blocks are taken at their
+calibrated operating point, so these amplitudes are lower bounds.
+
+### 4i. The group-average-curve analysis, calibrated (`group_curve.py`, EXPLORATORY)
+
+A common alternative averages the participants into one group curve and tests it frequency
+by frequency. This stage runs that procedure on the walking trials so the two verdicts can be
+compared, and measures its error rate on the same design. Each trial gets the stride
+percentile of its onset (of its press, for the response histogram); per participant the
+measure is averaged per percentile, the group value of a percentile is the mean over
+participants, and 20 equal bins form the curve. A cosine is fitted at every frequency of the
+0.1–10 cps grid. The null resamples the 100 group percentile values with replacement,
+re-bins and refits (1000 times); a frequency is significant above its own 95th percentile,
+without correction across frequencies, and a significant fit within 1.5–2.5 cps counts as a
+step-rate modulation. The individual-level version runs the same procedure on each
+participant's curve at 2 cps.
+
+Three properties separate it from this pipeline's tests. The group curve sees only a
+modulation shared in phase, the question of the common-phase T², not of the phase-agnostic S.
+Its null resamples bins of the averaged curve, so it carries no information about trial
+counts per bin. And each frequency is tested at 5 % with an 11-frequency window searched. The
+stage quantifies the last point: in each of 500 null datasets the outcomes are shuffled
+against the onset phases within every block, everything else kept, and the full procedure is
+rerun. The output reports the false-positive rate at exactly 2 cps, within 1.5–2.5 cps and at
+any frequency, beside this pipeline's Holm p-values for the matching measures.
+
+## The calibration error and what it costs
+
+Each block presents its tilts at the threshold its calibration measured, and
+`calibration_transfer.py` checks whether the blocks land at the intended 75 %. Two stages
+follow that up, both after `calib_transfer`: `threshold_phase.py` on the data and
+`calibration_cost.py` by simulation.
+
+**What a trial can show.** A stride-phase modulation of the threshold moves accuracy by
+dP/dln(threshold). Under the rig's psychometric model (Weibull, slope 2.5, lapse 0.05) the
+information a trial carries about a threshold shift peaks at 84 % correct, not at the 75 % the
+threshold level aims for; it falls to a quarter at 60 % and to zero at chance and at ceiling.
+Blocks that come out harder than planned therefore lose more than blocks equally easier.
+
+**Where the error comes from** (`calibration_cost.py`). From the transfer ratios: whether
+extreme calibrations regress toward the participant's level in the blocks (the signature of
+estimation noise), how the spread beyond block sampling compares with the QUEST+ stopping
+rule, and how far the blocks are shifted from the calibrated point.
+
+**What it costs.** The information retained as a function of the ratio's spread and shift,
+and the power of the confirmatory and information-weighted tests at the planned N, simulated
+with the `davidson_power` simulator for perfect calibration, the observed walking ratios and
+a stricter stopping rule.
+
+**The information-weighted test** (`threshold_phase.py`; method in its docstring) runs on
+exactly the confirmatory test's trials and phases and states an effect as a modulation of the
+threshold, which compares across operating points and studies.
+
+References for §4f–i:
+- Collewijn H, Van der Steen J, Ferman L, Jansen TC (1985). Human ocular counterroll: assessment of static and dynamic properties from electromagnetic scleral coil recordings. *Exp Brain Res* 59:185–196.
+- Kennedy PE (1995). Randomization tests in econometrics. *J Bus Econ Stat* 13:85–94.
+- Matthis JS, Muller KS, Bonnen KL, Hayhoe MM (2022). Retinal optic flow during natural locomotion. *PLoS Comput Biol* 18:e1009575.
+
 ## 5. What the walking itself shows (exploratory gait analyses)
 
-Four analyses use only the head motion and the event *times*, never the answers. None is
-confirmatory; each is a description of how people walk in the CAVE while doing the task.
+Five analyses use only the head motion and the event *times*, never the answers. None is
+confirmatory; each is a description of how people walk in the CAVE while doing the task. A
+rig check (5f) measures the sign conventions they rely on.
 
 **5a. Does the task reset the gait rhythm? (`gait_prc.py`)** Walking behaves like a
 limit-cycle oscillator, and an oscillator's response to a brief input depends on where in
@@ -643,17 +790,19 @@ sets of the same size, and PRC shape (2-harmonic R²) against the same. Onset an
 ~0.8 s apart and not independent.
 
 **5b. Head stabilisation (`head_stability.py`).** The head pitches against the vertical bob
-so the line of sight stays on a point ahead (Pozzo et al., 1990): the **head fixation point**
-of Hirasaki et al. (1999). Pitch is measured as rotation relative to the block's median head
-pose, about the horizontal room axis that carries the most step-frequency power (the rigid
-body's own axes are not aligned with the room). Reported per block: step-band coherence and
-phase between bob and pitch, the fixation-point distance, and the compensation of gaze error
-for a target at the 2 m stimulus distance, plus stride-phase profiles. **The pitch sign is not
-verified** (`config.HEAD_PITCH_SIGN_VERIFIED`): the observed step-band phase (~125–170°) reads
-as anti-compensatory, which contradicts the literature, so a mirrored rotation sense is the
-likelier explanation. Compensation is therefore also reported for the mirrored sign. This
-measures the head, not the retinal motion of the Gabor, which is head-locked and drawn from a
-render eye that keeps only head motion below 1.8 Hz.
+so the line of sight stays on a point ahead (Pozzo et al., 1990): the head fixation point of
+Hirasaki et al. (1999). Pitch is measured as rotation relative to the block's median head
+pose, about the horizontal axis that carries the most step-frequency power (the rigid body's
+own axes are not aligned with the room), positive nose down as measured by the rig check
+(5f). Reported per block: step-band coherence; the pitch lag behind the bob (within ±90° =
+compensatory, the head looks down while it is high); the fixation point from the
+step-frequency gain (the distance at which a pitch of that size, in time with the bob, would
+hold a point straight ahead); the least-squares in-phase fixation point, which the lag
+shrinks towards 0; the compensation of gaze error for a target at the 2 m stimulus distance;
+and the stream offset, how far `head_local_pos_y` lags the mocap client's own position, since
+a latency difference between the two streams would read as pitch lag. This measures the
+head, not the retinal motion of the Gabor, which follows the head's position (not its
+rotation) and is drawn from a render eye that keeps only head motion below 1.8 Hz.
 
 **5c. Stride-to-stride dynamics (`gait_dynamics.py`).** Stride-time CV; detrended fluctuation
 analysis (Peng et al., 1995) of the stride-interval series, whose healthy value shows
@@ -675,7 +824,34 @@ block, and the multi-channel phase slipped cycles (stride-time CV 9–23 % again
 sway and roll are much less clean oscillators than the vertical bob. The confirmatory analysis
 therefore uses troughs.
 
+**5e. Head kinematics over the stride (`head_kinematics.py`).** Vertical, lateral and
+fore-aft head translation and roll, pitch and yaw, each band-passed to 0.3–5 Hz and averaged
+in 50 stride-phase bins with the right foot's step first, so the once-per-stride components
+(sway, roll, yaw) do not average out. Rotation is the rotation vector relative to the block's
+mean pose, projected on the axes the rig check measured: roll positive right ear up, pitch
+positive nose down, yaw positive turning right. Reported per participant: the amplitude and
+peak of the mean profile at 1 and 2 cps, and the coupling of the once-per-stride rotations to
+the sway (the yaw's lag after the head's furthest sideways point, the distance at which a yaw
+of that size would hold a target ahead, and the roll's lead on the sway). Blocks with
+unreliable foot labels are skipped.
+
+**5f. Rig check: the sign conventions (`rig_check.py`, run on its own).** Which way is right
+and forward, and the sign of a nod, an ear-to-shoulder tilt and a head turn, depend on how
+the rig is mounted and how Motive streams, not on the data, so they are measured once with a
+scripted performer whose logs go to `rigcheck/` and never into the dataset. A standing
+recording runs a fixed script (baseline; shift right ×3, left ×3; step forward with each
+foot; stand on the right leg ×3, the left ×3; chin-down nod ×3; right ear to the shoulder ×3,
+left ×3; turn right ×3, left ×3) and a walking recording starts with a known foot. The held
+movements are found on the pose itself and assigned to the segments in order; each segment
+must move its own channel every time, with one sign. On this rig: `head_local_pos` +x = right
+and +z = forward (Unity frame); the head moves over the stance leg; the logged quaternion is
+Motive's frame (x right, y up, z backward); roll about +z is positive right ear up; pitch
+about the step-rate axis oriented to −x is positive nose down; yaw about −y is positive
+turning right. `config.LATERAL_SIGN_VERIFIED`, `HEAD_ROLL_SIGN_VERIFIED` and
+`HEAD_PITCH_SIGN_VERIFIED` record the check; on another rig, rerun it before trusting them.
+
 References for §5:
+- Hwang T-H, Effenberg AO (2021). Head trajectory diagrams for gait symmetry analysis using a single head-worn IMU. *Sensors* 21:6621.
 - Bruijn SM, Meijer OG, Beek PJ, van Dieën JH (2013). Assessing the stability of human locomotion: a review of current measures. *J R Soc Interface* 10:20120999.
 - Damouras S, Chang MD, Sejdić E, Chau T (2010). An empirical examination of detrended fluctuation analysis for gait data. *Gait Posture* 31:336–340.
 - Dingwell JB, Cusumano JP (2000). Nonlinear time series analysis of normal and pathological human walking. *Chaos* 10:848–863.

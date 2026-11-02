@@ -70,36 +70,64 @@ def _aggregate():
 
 
 def _paired(ax, df, col, ylabel):
+    # Seeded jitter, so the figure is the same on every run; the pairing lines run to the
+    # jittered points, not to the column centres.
+    rng = np.random.default_rng(0)
+    xs = {}
     for cond in CONDITIONS:
         sub = df[df["condition"] == cond]
         x = CONDITIONS.index(cond)
-        ax.scatter(np.full(len(sub), x) + np.random.uniform(-0.05, 0.05, len(sub)),
-                   sub[col], color=COND_COL[cond], alpha=0.7, zorder=2)
+        jit = x + rng.uniform(-0.06, 0.06, len(sub))
+        xs.update({(s, cond): j for s, j in zip(sub["sub"], jit)})
+        ax.scatter(jit, sub[col], color=COND_COL[cond], alpha=0.75, zorder=2)
         if len(sub):
-            ax.errorbar(x, sub[col].mean(), yerr=sub[col].sem() if len(sub) > 1 else 0,
-                        fmt="o", ms=13, mfc="none", mew=1.8, color=COND_COL[cond], zorder=3)
-    # connect paired participants
+            ax.errorbar(x + 0.22, sub[col].mean(), yerr=sub[col].sem() if len(sub) > 1 else 0,
+                        fmt="o", ms=9, mfc="none", mew=1.8, color=COND_COL[cond], zorder=3,
+                        capsize=3)
     for s in df["sub"].unique():
-        d = df[df["sub"] == s]
-        if set(d["condition"]) == set(CONDITIONS):
-            ax.plot([0, 1], [d[d.condition == "standing"][col].iloc[0],
-                             d[d.condition == "walking"][col].iloc[0]], color=S.MIST, zorder=1)
+        d = df[df["sub"] == s].set_index("condition")
+        if set(d.index) == set(CONDITIONS):
+            ax.plot([xs[(s, c)] for c in CONDITIONS], [d.loc[c, col] for c in CONDITIONS],
+                    color=S.MIST, zorder=1)
     ax.set_xticks([0, 1]); ax.set_xticklabels(CONDITIONS)
-    ax.set_ylabel(ylabel); ax.set_xlim(-0.5, 1.5)
+    ax.set_ylabel(ylabel); ax.set_xlim(-0.5, 1.6)
+
+
+def _within_sem(df, prefix):
+    """Cousineau-Morey within-participant SEM per (condition, difficulty) cell.
+
+    Each participant's cells are centred on their own mean and moved to the grand mean,
+    which removes the between-participant level differences that a plain SEM carries
+    (large for RT), then scaled by sqrt(J / (J - 1)) for the J cells (Morey 2008). Only
+    participants with every cell enter.
+    """
+    cols = [f"{prefix}_{d}" for d in DIFF_ORDER]
+    wide = df.pivot(index="sub", columns="condition", values=cols).dropna()
+    if len(wide) < 2:
+        return None
+    vals = wide.to_numpy(float)
+    norm = vals - vals.mean(axis=1, keepdims=True) + vals.mean()
+    j = vals.shape[1]
+    sem = norm.std(axis=0, ddof=1) / np.sqrt(len(wide)) * np.sqrt(j / (j - 1))
+    return dict(zip(wide.columns, sem))
 
 
 def _by_difficulty(ax, df, prefix, ylabel):
     x = np.arange(len(DIFF_ORDER))
-    for cond in CONDITIONS:
+    wsem = _within_sem(df, prefix)
+    for k, cond in enumerate(CONDITIONS):
         sub = df[df["condition"] == cond]
         if sub.empty:
             continue
         means = [sub[f"{prefix}_{d}"].mean() for d in DIFF_ORDER]
-        sems = [sub[f"{prefix}_{d}"].sem() if len(sub) > 1 else 0 for d in DIFF_ORDER]
-        ax.errorbar(x, means, yerr=sems, fmt="-o", color=COND_COL[cond], label=cond, capsize=3)
-    ax.set_xticks(x); ax.set_xticklabels([f"{d}\n({p})" for d, p in
+        sems = ([wsem[(f"{prefix}_{d}", cond)] for d in DIFF_ORDER] if wsem else
+                [sub[f"{prefix}_{d}"].sem() if len(sub) > 1 else 0 for d in DIFF_ORDER])
+        ax.errorbar(x + (k - 0.5) * 0.06, means, yerr=sems, fmt="-o",
+                    color=COND_COL[cond], label=cond, capsize=3)
+    ax.set_xticks(x); ax.set_xticklabels([f"{d.lower()}\n({p})" for d, p in
                                           zip(DIFF_ORDER, ["65%", "75%", "85%"])])
-    ax.set_xlabel("difficulty (target % correct)"); ax.set_ylabel(ylabel); ax.legend()
+    ax.set_xlabel("difficulty level (target % correct)"); ax.set_ylabel(ylabel)
+    ax.legend(loc="best")
 
 
 def main():
@@ -112,15 +140,25 @@ def main():
         return
     present = sorted(df["condition"].unique())
     fig, ax = plt.subplots(2, 2, figsize=(11, 9))
-    _paired(ax[0, 0], df, "hit_rate", "hit rate"); S.panel(ax[0, 0], "a", "Hit rate")
-    _by_difficulty(ax[0, 1], df, "hr", "hit rate"); S.panel(ax[0, 1], "b", "Hit rate × difficulty")
-    _paired(ax[1, 0], df, "rt", "reaction time (s)"); S.panel(ax[1, 0], "c", "Reaction time")
-    _by_difficulty(ax[1, 1], df, "rt", "reaction time (s)"); S.panel(ax[1, 1], "d", "RT × difficulty")
+    _paired(ax[0, 0], df, "hit_rate", "accuracy (P correct)"); S.panel(ax[0, 0], "a", "Accuracy")
+    _by_difficulty(ax[0, 1], df, "hr", "accuracy (P correct)")
+    S.panel(ax[0, 1], "b", "Accuracy by difficulty level")
+    _paired(ax[1, 0], df, "rt", "mean reaction time (s)"); S.panel(ax[1, 0], "c", "Reaction time")
+    _by_difficulty(ax[1, 1], df, "rt", "mean reaction time (s)")
+    S.panel(ax[1, 1], "d", "Reaction time by difficulty level")
 
-    fig.suptitle("Standing vs walking", fontsize=13, fontweight="semibold", x=0.012, ha="left")
+    n = int(df["sub"].nunique())
+    fig.suptitle(f"Standing vs walking, n = {n} participants", fontsize=13,
+                 fontweight="semibold", x=0.012, ha="left")
+    note = ("Answered main trials; each participant's value is the mean over their blocks "
+            "of that condition. a, c: one point per participant, lines pair them; open "
+            "circle = mean ± SEM. b, d: mean ± within-participant SEM (Cousineau-Morey), "
+            "which leaves out how much participants differ overall. Descriptive; the "
+            "threshold contrast is tested in threshold_by_condition.")
     if set(present) != set(CONDITIONS):
-        S.caption(fig, f"Only {', '.join(present)} present — standing block pending.")
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+        note = f"Only {', '.join(present)} present — standing block pending. " + note
+    S.caption(fig, note)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
     out = bids_io.fig_dir("conditions") / "conditions_standing_vs_walking.png"
     S.save(fig, out)
 

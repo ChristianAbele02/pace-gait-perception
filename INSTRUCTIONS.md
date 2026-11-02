@@ -263,6 +263,12 @@ What happens:
 - **UNRELIABLE** means the run did not converge, catch trials were failed, or the estimate hit
   a limit. **Re-instruct the participant and run the calibration again.** Do not start blocks
   on an unreliable threshold.
+- **Even after DONE, check that the two trackers agree.** The calibration file's header line
+  reads `# trackerA_deg=…;trackerB_deg=…;…;agree=…`. If `agree=0` and one tracker is more than
+  about 1.5 times the other, the threshold handed to the blocks may be far too low or too
+  high: run the calibration again, or enter a threshold in the **Threshold** field
+  ([§10](#10-restarting-without-recalibrating)). A threshold set far below a participant's
+  own can put whole blocks at chance even when they get the easy catch trials right.
 - The threshold is stored for that condition and used automatically by its blocks. You never
   type it in.
 - A file `pXX-vV-bY-tZ_calibration_<condition>.csv` is written. Every row also records

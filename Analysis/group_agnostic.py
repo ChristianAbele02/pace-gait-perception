@@ -235,22 +235,23 @@ def _figure(results: dict, out: Path) -> None:
             ns = r["_null_stat"]
             ax.hist(ns, bins=40, color=S.MIST, edgecolor="white")
             ax.axvline(r["statistic"], color=S.MEASURE.get(m, S.INK), lw=2.2,
-                       label=f"observed (p={r['p_holm']:.3f}"
+                       label=f"observed (Holm p={r['p_holm']:.3f}"
                              f"{'*' if r['significant'] else ''})")
             S.reference_line(ax, x=r["null_p95"], label="null 95th pct")
             ax.set_xlabel(r"$S=\sum_i |z_i|^2/s_i^2$")
             if ci == 0:
                 ax.set_ylabel(f"permutations\n({f:.0f} cps)")
-            ax.legend(fontsize=8)
+            # Legend on the side away from the observed line, so it never sits on it.
+            right = r["statistic"] < r["null_p95"]
+            ax.legend(loc="upper right" if right else "upper left", fontsize=8)
             role = "PRIMARY" if res.get("is_primary") else "secondary"
             S.panel(ax, tags[ri * len(meas) + ci],
                     f"{S.MEASURE_LABEL.get(m, m)} @ {f:.0f} cps  [{role}]", fontsize=10)
     n = results[meas[0]]["n_participants"]
-    S.caption(fig, f"n = {n} participants. Each coefficient is studentised by the scale of "
-                   "that participant's own null, so nobody dominates the sum by being noisy; "
-                   "under H0 each contributes 1, so S ~ n. The statistic is rotation-invariant "
-                   "per participant: it detects oscillation at ANY preferred phase. Null = the "
-                   "participants' own trial-level permutations, summed at a common shuffle index.")
+    S.caption(fig, f"n = {n} participants. S sums each participant's 2- or 4-cps Fourier "
+                   "amplitude, scaled by their own permutation null, so it detects an "
+                   "oscillation at any preferred phase; under H0 its mean is n. Grey: S over "
+                   "the participants' own shuffles. Holm over 2 and 4 cps within each measure.")
     fig.tight_layout(rect=(0, 0.02, 1, 0.95))
     S.save(fig, out)
 

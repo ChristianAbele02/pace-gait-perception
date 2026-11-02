@@ -177,14 +177,27 @@ def caption(fig, text: str, *, y: float = -0.01, color: str = GREY,
             ha: str = "center") -> None:
     """Small grey note below a figure (method notes, parameters).
 
-    ``wrap`` sets the line length in characters; use it for anything longer than a short
-    phrase, otherwise the text is one line across the whole canvas. Keep notes to 1-3
+    ``wrap`` sets the line length in characters. By default the note wraps to the
+    figure's width: unwrapped, it is one line, and with a tight bounding box a line wider
+    than the axes widens the saved canvas. Explicit newlines are kept. Keep notes to 1-3
     lines; full captions belong in ``figure_captions.md``.
     """
-    if wrap:
-        text = _textwrap.fill(text, wrap)
+    if wrap is None:
+        wrap = _chars_per_line(fig, size)
+    text = "\n".join(_textwrap.fill(line, wrap) if line.strip() else line
+                     for line in text.split("\n"))
     fig.text(x, y, text, ha=ha, va="top", fontsize=size, color=color,
              linespacing=1.45)
+
+
+def _chars_per_line(fig, size: float) -> int:
+    """How many characters of ``size``-pt text fit across ~90 % of the figure width.
+
+    DejaVu Sans averages ~0.52 em per character in running text; the 0.9 keeps a
+    margin so a line never quite reaches the canvas edge.
+    """
+    width_pt = fig.get_figwidth() * 72.0
+    return max(40, int(0.9 * width_pt / (0.52 * size)))
 
 
 def legend_outside(ax, **kw):
@@ -251,5 +264,6 @@ def _undersized_text(fig):
             continue
         pt = t.get_fontsize()
         if pt < MIN_PT - 1e-6:
-            bad.append(f"{pt:.1f} pt (< {MIN_PT:.0f} pt): {s[:48]!r}")
+            # ascii(): a label with ° or − must not crash the stage on a cp1252 console.
+            bad.append(f"{pt:.1f} pt (< {MIN_PT:.0f} pt): {ascii(s[:48])}")
     return bad

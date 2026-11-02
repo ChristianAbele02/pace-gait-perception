@@ -36,6 +36,27 @@ so same-direction tests are weak):
 
 Both nulls are built from the participants' own permutations.
 
+Response direction
+------------------
+The accuracy contrast cannot see a lean of the response towards one side: with tilts
+balanced, a bias towards "right" on foot A's steps raises accuracy for right tilts and
+lowers it for left tilts by the same amount. Three further contrasts on the same
+stride-flip null ask about the response itself:
+
+  * criterion ``Δc = c(foot A) - c(foot B)``, with ``c`` the signal-detection criterion
+    (tilt right = signal, log-linear rates as in ``sdt_phase``). A lean towards the side
+    of the stance foot makes Δc non-zero.
+  * tilt towards vs away from the stance foot, on accuracy and on log RT. A trial is
+    "towards" when the tilt points to the side of the foot in stance. A stride flip swaps
+    the foot of every trial in the stride, and so its pairing, so the same null applies.
+    In accuracy this is the criterion contrast again, in percentage points; in RT it asks
+    whether a tilt towards the stance side is answered faster or slower, which a criterion
+    shift alone does not predict.
+
+Until ``config.LATERAL_SIGN_VERIFIED`` is set, "towards" means towards the side the
+lateral-sway convention assigns to the stance foot. The direction-agnostic S is valid
+either way.
+
 Confirmatory tests remain ``phase_analysis`` (per participant, 2/4 cps) and
 ``group_agnostic`` (population).
 
@@ -47,6 +68,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -169,6 +191,65 @@ def stance_contrast(y: np.ndarray, foot: np.ndarray, stride: np.ndarray, *,
     }
 
 
+def _criterion(counts: np.ndarray) -> np.ndarray:
+    """SDT criterion from ``(..., [n_signal, n_hit, n_noise, n_false_alarm])`` counts,
+    with the log-linear correction ``sdt_phase`` uses."""
+    from scipy.special import ndtri
+    hr = (counts[..., 1] + 0.5) / (counts[..., 0] + 1.0)
+    fa = (counts[..., 3] + 0.5) / (counts[..., 2] + 1.0)
+    return -0.5 * (ndtri(hr) + ndtri(fa))
+
+
+def criterion_contrast(is_right: np.ndarray, said_right: np.ndarray, foot: np.ndarray,
+                       stride: np.ndarray, *, n_perm: int = N_PERM,
+                       rng: np.random.Generator | None = None, chunk: int = 256) -> dict | None:
+    """``Δc = c(foot 0) − c(foot 1)`` with the stride-flip null.
+
+    As in ``_stride_flip_null``, a flip can only move a stride's per-foot counts between
+    the two groups, so the four SDT counts are aggregated per stride and foot once and
+    each permutation is a matrix product. ``said_right`` NaN (a timeout) is dropped.
+    """
+    rng = rng or np.random.default_rng(RNG_SEED)
+    said = np.asarray(said_right, float)
+    foot = np.asarray(foot, int)
+    ok = np.isfinite(said) & np.isin(foot, (0, 1))
+    sig = np.asarray(is_right, bool)[ok]
+    said, foot, stride = said[ok] > 0.5, foot[ok], np.asarray(stride)[ok]
+    n0, n1 = int((foot == 0).sum()), int((foot == 1).sum())
+    if min(n0, n1) < MIN_TRIALS_PER_FOOT:
+        return None
+    _, sp = np.unique(stride, return_inverse=True)
+    ns = int(sp.max()) + 1
+    cnt = lambda m: np.bincount(sp[m], minlength=ns).astype(float)
+    per = {k: np.stack([cnt((foot == k) & sig), cnt((foot == k) & sig & said),
+                        cnt((foot == k) & ~sig), cnt((foot == k) & ~sig & said)])
+           for k in (0, 1)}                                   # (4, n_strides)
+    base, d = per[0].sum(1), (per[1] - per[0]).T              # (4,), (n_strides, 4)
+    tot = per[0].sum(1) + per[1].sum(1)
+    c0, c1 = float(_criterion(per[0].sum(1))), float(_criterion(per[1].sum(1)))
+    null = np.empty(n_perm)
+    for i in range(0, n_perm, chunk):
+        f = rng.integers(0, 2, size=(min(chunk, n_perm - i), ns)).astype(np.float64)
+        g0 = base + f @ d
+        null[i:i + f.shape[0]] = _criterion(g0) - _criterion(tot - g0)
+    obs = c0 - c1
+    sd = float(np.std(null))
+    return {"delta": obs, "p": _two_sided_p(obs, null), "null_sd": sd,
+            "z": float(obs / sd) if sd > 0 else float("nan"),
+            "n_foot0": n0, "n_foot1": n1, "mean_foot0": c0, "mean_foot1": c1,
+            "_null": null}
+
+
+def towards_label(foot: np.ndarray, is_right: np.ndarray) -> np.ndarray:
+    """0 where the tilt points to the stance foot's side, 1 where it points away.
+
+    Foot 0 is the +x-sway foot, the right one under ``config.LATERAL_POSITIVE_IS_RIGHT``.
+    """
+    right_foot = 0 if getattr(C, "LATERAL_POSITIVE_IS_RIGHT", True) else 1
+    on_right = np.asarray(foot, int) == right_foot
+    return np.where(on_right == np.asarray(is_right, bool), 0, 1)
+
+
 # ===========================================================================
 # Trial extraction
 # ===========================================================================
@@ -240,10 +321,16 @@ def _recording_trials(rec) -> dict | None:
         idx = np.where(good)[0][keep]
         logrt[idx] = np.log10(rt[idx])
 
+    is_right = (ev["stimulus_side"].astype(str).str.lower() == "right").to_numpy(bool)
+    said_right = np.where(responded,
+                          (ev["response"].astype(str).str.lower() == "right").to_numpy(float),
+                          np.nan)
+
     keep = inside & (foot >= 0)
     return {k: v[keep] for k, v in
             {"foot": foot, "stride": stride, "pct_step": pct_step, "acc": acc,
-             "logrt": logrt, "confidence": conf}.items()}
+             "logrt": logrt, "confidence": conf, "is_right": is_right,
+             "said_right": said_right}.items()}
 
 
 def _pool_subject(recs) -> dict | None:
@@ -251,7 +338,8 @@ def _pool_subject(recs) -> dict | None:
 
     Stride ids are offset per run so strides from different runs stay distinct.
     """
-    keys = ("foot", "stride", "pct_step", "acc", "logrt", "confidence")
+    keys = ("foot", "stride", "pct_step", "acc", "logrt", "confidence", "is_right",
+            "said_right")
     pools: dict[str, list] = {k: [] for k in keys}
     offset = 0
     excluded = []
@@ -306,8 +394,20 @@ def analyse_subject(tr: dict, *, n_perm: int = N_PERM,
                                                if ang.size else None)
         bal[f"foot{k}_step_phase_R"] = float(np.abs(z)) if ang.size else None
 
+    # Response direction: the criterion by stance foot, and tilt towards vs away from it.
+    towards = towards_label(tr["foot"], tr["is_right"])
+    response = {
+        "criterion": criterion_contrast(tr["is_right"], tr["said_right"], tr["foot"],
+                                        tr["stride"], n_perm=n_perm, rng=rng),
+        "towards_accuracy": stance_contrast(tr["acc"], towards, tr["stride"],
+                                            n_perm=n_perm, rng=rng),
+        "towards_logrt": stance_contrast(tr["logrt"], towards, tr["stride"],
+                                         n_perm=n_perm, rng=rng),
+    }
+
     return {
         "accuracy": acc, "reaction_time": rt, "accuracy_confident_steps": acc_conf,
+        "response": response,
         "balance": bal, "n_trials": int(np.size(tr["foot"])),
         "pct_confident_steps": round(float(100 * np.mean(conf_ok)), 1),
         "foot_names": [gait_mod.foot_name(0), gait_mod.foot_name(1)],
@@ -488,6 +588,59 @@ def _population_figure(rows: list[dict], pop: dict, out: Path):
     S.save(fig, out)
 
 
+RESPONSE_CONTRASTS = {
+    "criterion": ("criterion c", 1.0, "Δc, foot A − foot B"),
+    "towards_accuracy": ("accuracy, tilt towards vs away", 100.0, "Δ accuracy (pp), towards − away"),
+    "towards_logrt": ("log RT, tilt towards vs away", 1000.0, "Δ log10 RT (x 1000), towards − away"),
+}
+
+
+def response_population(rows: list[dict]) -> dict:
+    """Population tests of the three response-direction contrasts."""
+    out = {}
+    for key in RESPONSE_CONTRASTS:
+        have = [r for r in rows if (r.get("response") or {}).get(key)]
+        if len(have) < 2:
+            continue
+        out[key] = population_test([r["response"][key]["_null"] for r in have],
+                                   [r["response"][key]["delta"] for r in have])
+        out[key]["n_significant_participants"] = int(sum(r["response"][key]["p"] < 0.05
+                                                         for r in have))
+    return out
+
+
+def _response_figure(rows: list[dict], pop: dict, out: Path):
+    keys = [k for k in RESPONSE_CONTRASTS if k in pop]
+    fig, axes = plt.subplots(1, len(keys), figsize=(5.0 * len(keys), 4.6), squeeze=False)
+    for ax, key, tag in zip(axes[0], keys, "abc"):
+        title, scale, xlabel = RESPONSE_CONTRASTS[key]
+        have = [r for r in rows if (r.get("response") or {}).get(key)]
+        d = np.array([r["response"][key]["delta"] for r in have]) * scale
+        sd = np.array([r["response"][key]["null_sd"] for r in have]) * scale
+        pv = [r["response"][key]["p"] for r in have]
+        order = np.argsort(d)
+        for y, j in enumerate(order):
+            col = S.RED if pv[j] < 0.05 else S.GREY
+            ax.errorbar(d[j], y, xerr=1.959964 * sd[j], fmt="o", color=col, ecolor=col,
+                        capsize=3, ms=5, lw=1.2)
+        ax.axvline(0, color=S.INK, lw=1.0)
+        ax.set_yticks(range(len(order)))
+        ax.set_yticklabels([have[j]["sub"] for j in order], fontsize=8)
+        ax.set_xlabel(xlabel)
+        p = pop[key]
+        S.panel(ax, tag, f"{title}\nS={p['agnostic_S']:.1f} (p={p['agnostic_p']:.3f}), "
+                         f"T={p['common_T']:+.2f} (p={p['common_p']:.3f})", fontsize=9.5)
+    fig.suptitle(f"Response direction by stance foot (n = {len(rows)} participants)",
+                 fontsize=12.5, fontweight="semibold", x=0.012, ha="left")
+    S.caption(fig, "EXPLORATORY. Per participant ±1.96 SD of the stride-flip null; red, p < .05. "
+                   "S: direction-agnostic population statistic; T: same direction in everyone. "
+                   "'Towards' = the tilt points to the side of the stance foot under the "
+                   "current sway-sign convention; until it is verified, only S and |T| are "
+                   "interpretable.", wrap=150)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.92))
+    S.save(fig, out)
+
+
 # ===========================================================================
 # Driver
 # ===========================================================================
@@ -527,7 +680,9 @@ def main():
             continue
         for lbl, why in tr.get("excluded_runs", []):
             print(f"  {lbl}: SKIPPED - foot labels {why}")
-        res = analyse_subject(tr, rng=np.random.default_rng(abs(hash((sub, ses))) % 2**32))
+        # crc32, not hash(): str hashes are salted per process, so hash() gave a different
+        # permutation null (and p-value) on every run.
+        res = analyse_subject(tr, rng=np.random.default_rng(zlib.crc32(f"{sub}_{ses}".encode())))
         if res is None:
             print(f"  {sub} {ses}: too few trials on one foot - skipped")
             continue
@@ -549,7 +704,9 @@ def main():
                         analysed_subjects={r["sub"] for r in rows}, prune=("stance_foot",))
     if len(rows) < 2:
         bids_io.clear_stale("stance_foot", "stance_foot_population.json",
-                            "stance_foot_population.png")
+                            "stance_foot_population.png",
+                            "stance_foot_response_population.json",
+                            "stance_foot_response_population.png")
     if len(rows) >= 2:
         pop = population_test([r["accuracy"]["_null"] for r in rows],
                               [r["accuracy"]["delta"] for r in rows])
@@ -566,6 +723,18 @@ def main():
               f"p={pop['common_p']:.4f} -> "
               f"{'CONSISTENT DIRECTION' if pop['common_significant'] else 'n.s.'}"
               + ("" if pop["anatomical"] else "  [PROVISIONAL: sway sign unverified]"))
+        rpop = response_population(rows)
+        if rpop:
+            (out_dir / "stance_foot_response_population.json").write_text(
+                json.dumps(_json_safe({"note": "EXPLORATORY. Response direction by stance "
+                                               "foot; stride-flip null.", **rpop}), indent=2),
+                encoding="utf-8")
+            _response_figure(rows, rpop, bids_io.fig_dir("stance_foot")
+                             / "stance_foot_response_population.png")
+            print("\n  RESPONSE DIRECTION:")
+            for key, p in rpop.items():
+                print(f"    {RESPONSE_CONTRASTS[key][0]:<32}: S={p['agnostic_S']:.2f} "
+                      f"(p={p['agnostic_p']:.4f}), T={p['common_T']:+.3f} (p={p['common_p']:.4f})")
     print(f"\nOutputs -> {out_dir}")
 
 

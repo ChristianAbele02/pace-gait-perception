@@ -251,7 +251,7 @@ def _figure(results: dict, inter: dict | None, out: Path) -> None:
     if not meas:
         return
     ncol = len(meas) + (1 if inter else 0)
-    fig, axes = plt.subplots(len(FREQS), ncol, figsize=(4.6 * ncol, 7.4), squeeze=False)
+    fig, axes = plt.subplots(len(FREQS), ncol, figsize=(3.6 * ncol, 7.4), squeeze=False)
     fig.suptitle("Common-phase population test (Hotelling T²) — SECONDARY",
                  fontsize=13, fontweight="semibold", x=0.012, ha="left")
     tags = "abcdefgh"
@@ -268,15 +268,15 @@ def _figure(results: dict, inter: dict | None, out: Path) -> None:
             ax = axes[ri][len(meas)]
             d = inter[f]
             w, s, _ = _condition_coefficients(f)
-            _scatter_panel(ax, w - s, d["difference"], S.RED)
-            S.panel(ax, tags[k], f"walking − standing @ {f:.0f} cps", fontsize=10)
+            _scatter_panel(ax, w - s, d["difference"], S.MEASURE["accuracy"])
+            S.panel(ax, tags[k], f"accuracy, walking − standing @ {f:.0f} cps", fontsize=10)
             k += 1
-    S.caption(fig, "Each point is one participant's (cos, sin) coefficient; the ellipse is the "
-                   "95 % confidence region for their MEAN. The test asks whether that mean "
-                   "differs from the origin, i.e. whether the population oscillates at a COMMON "
-                   "phase. This is secondary: at Davidson's coherence of R = 0.33 the vector "
-                   "mean cancels most of the signal, which is why the confirmatory test "
-                   "(group_agnostic) is phase-agnostic instead.")
+    S.caption(fig, "Each point is one participant's (cos, sin) Fourier coefficient; X = their "
+                   "mean, dashed ellipse = its 95 % confidence region. Hotelling T² asks whether "
+                   "the mean differs from the origin, i.e. whether people share a phase. Holm "
+                   "over 2 and 4 cps within each panel column. Secondary: with idiosyncratic "
+                   "phases the mean cancels, so the confirmatory test is phase-agnostic. "
+                   "Standing trials are phased on the head-sway surrogate.")
     fig.tight_layout(rect=(0, 0.03, 1, 0.94))
     S.save(fig, out)
 
@@ -289,7 +289,7 @@ def _scatter_panel(ax, Z, r, color):
                label=f"n = {Z.shape[0]} participants")
     mu = Z.mean(0)
     ax.scatter([mu[0]], [mu[1]], s=90, marker="X", color=color, zorder=4,
-               label=f"mean (p={r.get('p_holm', r['p_value']):.3f}"
+               label=f"mean (Holm p={r.get('p_holm', r['p_value']):.3f}"
                      f"{'*' if r.get('significant') else ''})")
     if r["estimable"]:
         e = _ellipse(np.cov(Z, rowvar=False), mu, Z.shape[0])

@@ -300,30 +300,43 @@ def _figure_difficulty(df: pd.DataFrame, dm: dict, out: Path):
         axA.scatter(cen, obs, s=14, color=col, alpha=0.40, zorder=1)
         logit = m["b_intercept"] + m["b_cos"] * np.cos(w * xf) + m["b_sin"] * np.sin(w * xf)
         axA.plot(xf, 1 / (1 + np.exp(-logit)), color=col, lw=2.4, zorder=3,
-                 label=f"{DIFF_LABEL[d]}: amp {m['amp_hitrate']:.3f}")
-    axA.set_xlabel("stride phase (% stride)"); axA.set_ylabel("hit rate")
-    S.panel(axA, "a", "2-cps oscillation by difficulty", fontsize=10)
+                 label=f"{DIFF_LABEL[d]}: amplitude {100 * m['amp_hitrate']:.1f} pp")
+    axA.set_xlabel("stride phase (% stride)"); axA.set_ylabel("accuracy (P correct)")
+    lo, hi = axA.get_ylim()
+    axA.set_ylim(lo, hi + 0.25 * (hi - lo))          # headroom: the legend sits above the data
+    S.panel(axA, "a", "2-cps fit per difficulty level", fontsize=10)
     axA.legend(loc="upper right", fontsize=8)
 
     ds = [d for d in DIFF_ORDER if d in dm["by_difficulty"]]
-    amps = [dm["by_difficulty"][d]["amp_hitrate"] for d in ds]
+    amps = [100 * dm["by_difficulty"][d]["amp_hitrate"] for d in ds]
     axB.bar(range(len(ds)), amps, color=[DIFF_COL[d] for d in ds], alpha=0.85,
             edgecolor="white", zorder=2)
+    # Amplitude a fit returns from noise alone: each Fourier coefficient of a binary
+    # outcome has SE sqrt(2 p(1-p) / n), and the length of a 2-D Gaussian vector of that
+    # SD averages SE * sqrt(pi/2) (Rayleigh mean).
     for i, d in enumerate(ds):
-        axB.text(i, amps[i], f"{dm['by_difficulty'][d]['n_trials']}",
-                 ha="center", va="bottom", fontsize=8, color=S.GREY)
-    axB.set_xticks(range(len(ds))); axB.set_xticklabels([d.title() for d in ds])
-    axB.set_ylabel("2-cps amplitude (hit-rate)")
-    S.panel(axB, "b", "Amplitude by difficulty  (descriptive; n trials above bars)",
-            fontsize=10)
+        m = dm["by_difficulty"][d]
+        p, n = m["base_rate"], m["n_trials"]
+        floor = 100 * np.sqrt(np.pi / 2) * np.sqrt(2 * p * (1 - p) / n)
+        axB.plot([i - 0.38, i + 0.38], [floor, floor], color=S.INK, lw=1.4, ls="--", zorder=3,
+                 label="expected from noise alone" if i == 0 else None)
+    axB.set_xticks(range(len(ds)))
+    axB.set_xticklabels([f"{DIFF_LABEL[d]}\n{dm['by_difficulty'][d]['n_trials']} trials"
+                         for d in ds])
+    axB.set_ylim(0, max(amps) * 1.3)
+    axB.set_ylabel("2-cps amplitude (pp)")
+    axB.legend(loc="upper left", fontsize=8)
+    S.panel(axB, "b", "Amplitude by difficulty level", fontsize=10)
 
-    fig.suptitle(f"Difficulty-dependent stride-phase modulation (H6) — "
-                 f"n = {dw['sub'].nunique()} participant(s), {len(dw)} walking trials",
+    fig.suptitle(f"Stride-phase modulation by difficulty (descriptive), "
+                 f"n = {dw['sub'].nunique()} participants, {len(dw)} walking trials",
                  fontsize=12, fontweight="semibold", x=0.012, ha="left")
-    S.caption(fig, "EASY/HARD compress accuracy toward ceiling/floor; read the ordering, "
-                   "not raw amplitude. Per-level fit = random-intercept GLMM (fixed-effects "
-                   "fallback at n=1).")
-    fig.tight_layout(rect=(0, 0, 1, 0.95)); S.save(fig, out)
+    S.caption(fig, "a: binned accuracy (points) and the 2-cps fit of a random-intercept "
+                   "logistic GLMM per level; levels target 65/75/85 % correct. b: its "
+                   "amplitude; an amplitude near the dashed line is what a fit finds in pure "
+                   "noise at that trial count. Hard and easy also compress accuracy toward "
+                   "floor and ceiling, so only the ordering would be informative. No test.")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.95)); S.save(fig, out)
 
 
 # ===========================================================================
@@ -469,37 +482,54 @@ def _figure_combined(df: pd.DataFrame, fit: dict, fc: dict, out: Path):
 
     # left: walking stride-phase oscillation
     dw = df[df["condition"] == "walking"]
-    cen, obs = _binned_hitrate(dw)
+    _binned_with_se(ax[0], dw)
     logit_w = fit["b_intercept"] + fit["b_cos"] * np.cos(w * xf) + fit["b_sin"] * np.sin(w * xf)
-    ax[0].scatter(cen, obs, s=20, color=S.GREY, label="observed (20 bins)")
-    ax[0].plot(xf, 1 / (1 + np.exp(-logit_w)), color=S.TEAL, lw=2.5,
-               label=f"fit @ 2 cps (amp {fit['amp_hitrate']:.3f})")
-    S.reference_line(ax[0], y=fit["base_rate"], ls=":", label="base rate")
-    ax[0].set_xlabel("stride phase (% stride)"); ax[0].set_ylabel("hit rate")
-    S.panel(ax[0], "a", f"Walking — stride phase (n={fit['n_trials']})", fontsize=10)
-    ax[0].legend(loc="upper right")
+    ax[0].plot(xf, 1 / (1 + np.exp(-logit_w)), color=S.COND["walking"], lw=2.5,
+               label=f"2-cps fit: amplitude {100 * fit['amp_hitrate']:.1f} pp")
+    S.reference_line(ax[0], y=fit["base_rate"], ls=":", label="mean accuracy")
+    ax[0].set_xlabel("stride phase (% stride)"); ax[0].set_ylabel("accuracy (P correct)")
+    S.panel(ax[0], "a", f"Walking: stride phase ({fit['n_trials']} trials)", fontsize=10)
 
     # right: standing surrogate-phase control
     ds = df[df["condition"] == "standing"]
     c = fc["_coef"]
-    cen2, obs2 = _binned_hitrate(ds)
+    _binned_with_se(ax[1], ds)
     logit_s = c["Intercept"]["b"] + c["cosph"]["b"] * np.cos(w * xf) + c["sinph"]["b"] * np.sin(w * xf)
-    ctrl_amp = fc["standing_oscillation_control"]["amp_logit"]
-    ax[1].scatter(cen2, obs2, s=20, color=S.GREY, label="observed (20 bins)")
-    ax[1].plot(xf, 1 / (1 + np.exp(-logit_s)), color=S.ORANGE, lw=2.5,
-               label=f"control fit (amp {ctrl_amp:.3f} logit)")
-    ax[1].set_xlabel("surrogate head-phase (% cycle)")
-    S.panel(ax[1], "b", f"Standing — postural control (n={fc['n_standing']})", fontsize=10)
-    ax[1].legend(loc="upper right")
+    # Same delta-method scale as the walking amplitude (logit amplitude x p(1-p)).
+    base_s = float(ds["correct"].mean())
+    ctrl_pp = 100 * fc["standing_oscillation_control"]["amp_logit"] * base_s * (1 - base_s)
+    ax[1].plot(xf, 1 / (1 + np.exp(-logit_s)), color=S.COND["standing"], lw=2.5,
+               label=f"2-cps fit: amplitude {ctrl_pp:.1f} pp")
+    S.reference_line(ax[1], y=base_s, ls=":", label="mean accuracy")
+    ax[1].set_xlabel("head-sway surrogate phase (% cycle)")
+    S.panel(ax[1], "b", f"Standing control ({fc['n_standing']} trials)", fontsize=10)
+    lo, hi = ax[0].get_ylim()
+    ax[0].set_ylim(lo, hi + 0.2 * (hi - lo))       # shared y: headroom for both legends
+    for a in ax:
+        a.legend(loc="upper right", fontsize=8.5)
 
     le, wi = fc["locomotion_effect"], fc["walking_specific_oscillation"]
-    fig.suptitle(f"Locomotion × stride-phase GLMM (descriptive)  —  locomotion effect "
-                 f"OR={le['odds_ratio']:.2f},  walking-specific amplitude "
-                 f"{wi['amp_logit']:.3f} logit",
+    fig.suptitle("Accuracy over the stride, walking vs a standing control (GLMM estimates)",
                  fontsize=12, fontweight="semibold", x=0.012, ha="left")
-    S.caption(fig, fc["method"] + "  |  Estimates only: the locomotion-specificity TEST is "
-                   "common_phase.interaction_test (paired Hotelling T2).")
-    fig.tight_layout(rect=(0, 0, 1, 0.95)); S.save(fig, out)
+    S.caption(fig, "Points: accuracy in 20 phase bins, ± binomial SE. Lines: 2-cps fit of a "
+                   "logistic GLMM with a participant random intercept. Standing has no stride, "
+                   "so its trials are phased on the head's postural sway; that surrogate can "
+                   "pick up head movements evoked by the stimulus or the key press. Walking vs "
+                   f"standing: odds ratio {le['odds_ratio']:.2f}; difference of the two 2-cps "
+                   f"oscillations {wi['amp_logit']:.3f} logit. Estimates only; the tests are "
+                   "the phase-agnostic and common-phase tests.")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.95)); S.save(fig, out)
+
+
+def _binned_with_se(ax, df: pd.DataFrame, nbins: int = 20) -> None:
+    """Binned accuracy with its binomial standard error, in grey."""
+    cen, obs = _binned_hitrate(df, nbins)
+    edges = np.linspace(0, 100, nbins + 1)
+    n = np.bincount(np.clip(np.digitize(df["phase"], edges) - 1, 0, nbins - 1),
+                    minlength=nbins).astype(float)
+    se = np.sqrt(obs * (1 - obs) / np.where(n > 0, n, np.nan))
+    ax.errorbar(cen, obs, yerr=se, fmt="o", ms=4, color=S.GREY, ecolor=S.MIST, capsize=0,
+                lw=1.2, zorder=2, label=f"observed ({nbins} bins)")
 
 
 _GLMM_OUTPUTS = ("population_glmm.json", "population_glmm.png",

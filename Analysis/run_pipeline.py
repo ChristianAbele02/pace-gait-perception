@@ -21,7 +21,9 @@ try:
                    gam_phase, ddm_phase, prevalence_planning, stance_foot, sdt_phase,
                    common_phase, head_stability, gait_dynamics, gait_prc,
                    gait_phase_methods, calibration_transfer, bayes_glmm, bids_io,
-                   trial_table, step_table, stage_cache, presentation, config as C)
+                   trial_table, step_table, stage_cache, presentation, threshold_phase,
+                   calibration_cost, head_kinematics, roll_bias, press_phase, shared_power,
+                   press_accuracy, group_curve, config as C)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bidsify, calibration, calibration_refit, qc, block_rules, gait, phase_analysis
@@ -32,6 +34,8 @@ except ImportError:
     import head_stability, gait_dynamics, gait_prc, gait_phase_methods
     import calibration_transfer, bayes_glmm, stage_cache
     import trial_table, step_table, presentation
+    import threshold_phase, calibration_cost
+    import head_kinematics, roll_bias, press_phase, shared_power, press_accuracy, group_curve
     import bids_io
     import config as C
 
@@ -39,8 +43,10 @@ STAGES = ["bids", "calibration", "gate", "calib_refit", "qc", "gait", "trial_tab
           "step_table", "phase",
           "agnostic", "common_phase", "glmm", "bayes_glmm", "population", "planning", "clocktime",
           "conditions",
-          "threshold", "calib_transfer", "descriptive", "onset_response", "gam", "ddm", "stance_foot",
-          "sdt", "phase_methods", "head_stability", "gait_dynamics", "gait_prc", "report"]
+          "threshold", "calib_transfer", "threshold_phase", "calib_cost", "shared_power", "descriptive",
+          "onset_response", "press_phase", "press_accuracy", "group_curve", "gam", "ddm", "stance_foot", "sdt", "roll_bias",
+          "phase_methods", "head_stability", "head_kinematics", "gait_dynamics", "gait_prc",
+          "report"]
 
 
 _TIMINGS: list[tuple[str, float]] = []
@@ -165,6 +171,8 @@ def main() -> None:
         _lap('6a2. Bayesian mixed models: stride phase x condition (secondary)')
         print("\n########## 6a2. Bayesian mixed models: stride phase x condition (secondary) ##########")
         bayes_glmm.main([])
+        print("\n  -- the same accuracy model, phase read at the press (exploratory) --")
+        bayes_glmm.main(["--lock", "press"])
     if "population" in steps:
         _lap('6b. Population prevalence & phase (Fig 4/5)')
         print("\n########## 6b. Population prevalence & phase (Fig 4/5) ##########")
@@ -189,6 +197,20 @@ def main() -> None:
         _lap('7a2. Calibration transfer: calibrated vs block threshold')
         print("\n########## 7a2. Calibration transfer: calibrated vs block threshold ##########")
         calibration_transfer.main()
+    if "threshold_phase" in steps:
+        _lap('7a3. Stride-phase modulation of the threshold, information-weighted (secondary)')
+        print("\n########## 7a3. Stride-phase modulation of the threshold, information-weighted (secondary) ##########")
+        threshold_phase.main()
+    if "calib_cost" in steps:
+        # After calib_transfer, whose ratios it simulates.
+        _lap('7a4. Calibration cost: information and power at the observed calibration error')
+        print("\n########## 7a4. Calibration cost: information and power at the observed calibration error ##########")
+        calibration_cost.main()
+    if "shared_power" in steps:
+        # After the phase stages and common_phase, whose trial counts and amplitudes it reads.
+        _lap('7a5. Power for a stride-phase oscillation shared by all participants')
+        print("\n########## 7a5. Power for a stride-phase oscillation shared by all participants ##########")
+        shared_power.main()
     if "descriptive" in steps:
         _lap('7b. Descriptive dataset overview (exploratory)')
         print("\n########## 7b. Descriptive dataset overview (exploratory) ##########")
@@ -197,6 +219,19 @@ def main() -> None:
         _lap('7c. Onset vs response locus (exploratory)')
         print("\n########## 7c. Onset vs response locus (exploratory) ##########")
         onset_response.main()
+    if "press_phase" in steps:
+        _lap('7c2. Button presses over the stride (exploratory)')
+        print("\n########## 7c2. Button presses over the stride (exploratory) ##########")
+        press_phase.main()
+    if "press_accuracy" in steps:
+        _lap('7c3. Accuracy and the stride phase at the press (exploratory)')
+        print("\n########## 7c3. Accuracy and the stride phase at the press (exploratory) ##########")
+        press_accuracy.main()
+    if "group_curve" in steps:
+        # After the population stages and press_phase, whose results it sets beside its own.
+        _lap('7c4. Group-average-curve analysis, calibrated (exploratory comparison)')
+        print("\n########## 7c4. Group-average-curve analysis, calibrated (exploratory comparison) ##########")
+        group_curve.main()
     if "gam" in steps:
         _lap('7d. Cyclic-spline GAM + mutual information (exploratory)')
         print("\n########## 7d. Cyclic-spline GAM + mutual information (exploratory) ##########")
@@ -213,6 +248,11 @@ def main() -> None:
         _lap('7g. Sensitivity vs criterion — SDT decomposition (exploratory)')
         print("\n########## 7g. Sensitivity vs criterion — SDT decomposition (exploratory) ##########")
         sdt_phase.main()
+    if "roll_bias" in steps:
+        # Reads the walking thresholds from the conditions stage (7a) for its figure.
+        _lap('7g2. Head roll and the left/right response (exploratory)')
+        print("\n########## 7g2. Head roll and the left/right response (exploratory) ##########")
+        roll_bias.main()
     if "phase_methods" in steps:
         _lap('7h. Stride-phase methods on held-out signals (exploratory)')
         print("\n########## 7h. Stride-phase methods on held-out signals (exploratory) ##########")
@@ -221,6 +261,10 @@ def main() -> None:
         _lap('7i. Head stabilisation over the stride (exploratory)')
         print("\n########## 7i. Head stabilisation over the stride (exploratory) ##########")
         head_stability.main()
+    if "head_kinematics" in steps:
+        _lap('7i2. Head kinematics over the stride (exploratory)')
+        print("\n########## 7i2. Head kinematics over the stride (exploratory) ##########")
+        head_kinematics.main()
     if "gait_dynamics" in steps:
         _lap('7j. Stride-to-stride gait dynamics (exploratory)')
         print("\n########## 7j. Stride-to-stride gait dynamics (exploratory) ##########")

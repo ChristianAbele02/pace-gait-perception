@@ -222,7 +222,12 @@ def mutual_info_perm(phase, y, *, y_binary=True, nbins_phase=18, nbins_y=6,
     return {"mi_bits": float(obs), "mi_null_mean_bits": float(null.mean()),
             "mi_debiased_bits": float(obs - null.mean()), "p_value": p,
             "significant": bool(p < 0.05), "n": int(phase.size),
-            "nbins_phase": nbins_phase, "n_perm": nperm}
+            "nbins_phase": nbins_phase, "n_perm": nperm, "_null": null}
+
+
+def _public(d: dict | None) -> dict | None:
+    """``d`` without its private (``_``-prefixed, figure-only) entries."""
+    return None if d is None else {k: v for k, v in d.items() if not k.startswith("_")}
 
 
 # ===========================================================================
@@ -230,8 +235,8 @@ def mutual_info_perm(phase, y, *, y_binary=True, nbins_phase=18, nbins_y=6,
 # ===========================================================================
 def _figure(df, gam_acc, mi_acc, out: Path):
     fig, ax = plt.subplots(1, 2, figsize=(12.6, 4.7), gridspec_kw=dict(width_ratios=[1.5, 1.0]))
-    fig.suptitle(f"Cyclic-spline GAM + mutual information (accuracy) — "
-                 f"n = {gam_acc['n_participants']} participant(s), {gam_acc['n_trials']} trials",
+    fig.suptitle(f"Shape-free tests of accuracy over the stride (exploratory), "
+                 f"n = {gam_acc['n_participants']} participants, {gam_acc['n_trials']} trials",
                  fontsize=12.5, fontweight="semibold", x=0.012, ha="left")
     # (a) binned hit rate, GAM smooth and single cosine
     cen, binned, _ = pa._bin(df["phase"].to_numpy(float), df["correct"].to_numpy(float), 20, "mean")
@@ -247,23 +252,31 @@ def _figure(df, gam_acc, mi_acc, out: Path):
     xf = np.linspace(0, 100, 200)
     ax[0].plot(xf, beta[0] + beta[1] * np.cos(w * xf) + beta[2] * np.sin(w * xf),
                color=S.ORANGE, lw=1.8, ls="--", label=f"single cosine @ {f0:.0f} cps")
-    ax[0].set_xlabel("stride phase (% stride)"); ax[0].set_ylabel("hit rate")
+    ax[0].set_xlabel("stride phase (% stride)"); ax[0].set_ylabel("accuracy (P correct)")
+    lo, hi = ax[0].get_ylim()
+    ax[0].set_ylim(lo, hi + 0.25 * (hi - lo))       # headroom: the legend sits above the data
     ax[0].legend(loc="upper right", fontsize=8)
-    tag = "prefers GAM (non-sinusoidal)" if gam_acc["prefers_gam_over_cosine"] else "cosine adequate"
-    S.panel(ax[0], "a", f"GAM vs cosine — ΔAIC {gam_acc['aic_single_cosine']-gam_acc['aic_gam']:+.1f} ({tag})",
-            fontsize=9.5)
-    # (b) MI observed vs null
+    d_aic = gam_acc["aic_single_cosine"] - gam_acc["aic_gam"]
+    tag = "GAM fits better" if gam_acc["prefers_gam_over_cosine"] else "no gain over the cosine"
+    S.panel(ax[0], "a", f"Free shape vs cosine  (AIC gain {d_aic:+.1f}: {tag})", fontsize=9.5)
+    # (b) MI observed vs its permutation null
     if mi_acc:
-        ax[1].axvline(mi_acc["mi_bits"], color=S.PURPLE, lw=2.4,
-                      label=f"MI {mi_acc['mi_bits']:.4f} bits (p={mi_acc['p_value']:.3f})")
-        ax[1].axvline(mi_acc["mi_null_mean_bits"], color=S.RED, ls=":", lw=1.6, label="null mean")
-        ax[1].set_xlabel("mutual information (bits)"); ax[1].set_yticks([])
+        null = mi_acc.get("_null")
+        if null is not None:
+            ax[1].hist(1000 * np.asarray(null), bins=40, color=S.MIST, edgecolor="white",
+                       label="null (shuffled)")
+        ax[1].axvline(1000 * mi_acc["mi_bits"], color=S.PURPLE, lw=2.4,
+                      label=f"observed (p = {mi_acc['p_value']:.3f})")
+        ax[1].set_xlabel("mutual information (millibits)"); ax[1].set_ylabel("permutations")
         ax[1].legend(loc="upper right", fontsize=8)
-    S.panel(ax[1], "b", "MI(phase; accuracy) vs permutation null", fontsize=9.5)
-    S.caption(fig, "GAM: cyclic cubic spline, binomial, per-participant fixed intercepts; "
-                   "p = LR χ² of the smooth. MI: circular-binned, permutation null. Both "
-                   "EXPLORATORY (confirmatory = phase_analysis / glmm).")
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    S.panel(ax[1], "b", "Mutual information, phase and accuracy", fontsize=9.5)
+    S.caption(fig, "a: binned accuracy; purple = cyclic cubic-spline GAM (binomial, "
+                   "per-participant intercepts; p = likelihood-ratio test of the smooth); "
+                   "orange = single cosine. AIC gain = AIC(cosine) − AIC(GAM); above +2 the "
+                   "free shape earns its extra degrees of freedom. b: mutual information "
+                   "between phase (18 bins) and correct/wrong, against accuracy shuffled "
+                   "across phases.")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.95))
     S.save(fig, out)
 
 
@@ -292,7 +305,7 @@ def main():
     payload = {"note": "EXPLORATORY cyclic-spline GAM + mutual information; confirmatory "
                        "tests remain phase_analysis / glmm / population.",
                "gam_accuracy": gam_acc, "gam_reaction_time": gam_rt,
-               "mi_accuracy": mi_acc, "mi_reaction_time": mi_rt}
+               "mi_accuracy": _public(mi_acc), "mi_reaction_time": _public(mi_rt)}
     # leave the fitted curves out of the JSON
     slim = json.loads(json.dumps(payload))
     for g in ("gam_accuracy", "gam_reaction_time"):

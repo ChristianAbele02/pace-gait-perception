@@ -212,36 +212,34 @@ def session_for(ids: dict) -> str:
     return CALIBRATION_SESSION if ids["is_calibration"] else EXPERIMENT_SESSION
 
 
-# --- Lateral sway to anatomical side (stance-foot labels) -------------------
-# ``head_local_pos_x`` is ``trackingOrigin.InverseTransformPoint(head.position).x``
-# (ILLLoggerController.cs). Unity is left-handed, so facing the rig's +z, local +x is the
-# participant's right. The head and trunk shift toward the stance limb in single support,
-# so a step with positive mean lateral sway is a right-stance step.
+# --- Head pose conventions of the rig (measured by ``rig_check.py``) --------
+# Position: ``head_local_pos_*`` is ``trackingOrigin.InverseTransformPoint(head.position)``
+# (ILLLoggerController.cs), in Unity's left-handed frame: +x is the participant's RIGHT,
+# +y up, +z FORWARD.
+# Rotation: ``head_mocap_quat_*`` is the NatNet quaternion as Motive streams it, in
+# Motive's right-handed frame: x right, y up, z BACKWARD. The rotation vector the analysis
+# works with (``head_stability.rotation_on_grid``) is in that frame, so
+#   * roll  = rotation about +z (backward):  positive = right ear up;
+#   * pitch = rotation about the step-rate axis near x, oriented towards -x
+#             (``head_stability.pitch_axis``):  positive = nose down;
+#   * yaw   = rotation about -y (``head_kinematics``):  positive = turn to the right.
+# The rig check measured every one of these on a scripted performer (``rigcheck/``): a
+# shift, a single-leg stance and the first single support of a walk all put +x on the
+# right; a step forward is +z locally and -z in Motive; a chin-down nod, an ear to the
+# shoulder and a head turn give the rotation signs above.
 #
-# This rests on an assumption about the rig's mounting, not a measurement, so it is gated:
-#
-#   * LATERAL_SIGN_VERIFIED = False (default)
-#       Steps are still labelled consistently, so the stride origin, odd harmonics and
-#       the direction-agnostic stance-foot test (``stance_foot.py``) remain valid. Labels
-#       read "foot A"/"foot B", and the direction-specific (common-sign) population test
-#       is reported as provisional.
-#   * LATERAL_SIGN_VERIFIED = True
-#       Labels read "right"/"left" and the common-sign test has an anatomical meaning.
-#
-# To verify: record a walk-in-place with a known first step (called by the operator), run
-# ``python -m Analysis.gait`` and check that step's label in panel (e) of the block's
-# ``*_gait.png``. If inverted, flip LATERAL_POSITIVE_IS_RIGHT; do not change signs in the
-# analysis code.
-LATERAL_POSITIVE_IS_RIGHT = True    # +x sway during a step means that foot is in stance
-LATERAL_SIGN_VERIFIED = False       # set True after checking against a known first step
-
-# Head pitch sign (head_stability.py): positive = nose down, assuming a room frame of
-# x right / y up / z forward. The measured step-rate pitch lies ~130-180 deg from the
-# vertical bob, i.e. anti-compensatory. Pozzo et al. (1990) and Hirasaki et al. (1999)
-# report compensatory pitch in walking, so a mirrored rotation (e.g. in the Motive to Unity
-# conversion) is more likely. Until verified, the sign of fixation point and compensation is
-# not interpreted. To verify: nod (chin down) and check that the pitch goes positive.
-HEAD_PITCH_SIGN_VERIFIED = False
+# Lateral sway -> stance foot. The head and trunk displace TOWARD the stance limb through
+# single support (the CoM has to pass over the base of support; the rig check's
+# single-leg stances show it), so a step whose mean lateral sway is POSITIVE is a
+# RIGHT-stance step. With LATERAL_SIGN_VERIFIED the feet are named right/left and the
+# direction-specific stance-foot test is an anatomical claim; on a rig where the check
+# has not been made, set it False and the feet are named "foot A"/"foot B" (code 0 = the
+# +x-sway foot). If a check ever finds the sway inverted, flip LATERAL_POSITIVE_IS_RIGHT
+# rather than a sign in the analysis code.
+LATERAL_POSITIVE_IS_RIGHT = True    # +x sway during a step == that foot is in stance
+LATERAL_SIGN_VERIFIED = True        # rig_check: shift, single-leg stance and walk start
+HEAD_PITCH_SIGN_VERIFIED = True     # rig_check: chin-down nod
+HEAD_ROLL_SIGN_VERIFIED = True      # rig_check: right / left ear to the shoulder
 
 
 # --- Outcome measures and multiplicity -------------------------------------

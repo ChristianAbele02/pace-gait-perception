@@ -869,9 +869,9 @@ FOOT_COLOUR = (S.BLUE, S.ORANGE)      # by step_foot (0 = +sway foot)
 def _draw_feet(ax, res: GaitResult, window_s: float = 12.0) -> None:
     """QC of the stance-foot labels: evidence, decoded labels and roll agreement.
 
-    Also used to verify the sway sign: with a known first step, check the first shaded
-    step in panel (e); if inverted, flip ``config.LATERAL_POSITIVE_IS_RIGHT`` and set
-    ``LATERAL_SIGN_VERIFIED``.
+    The first shaded step of a walk whose first step is known shows the sway-sign
+    convention at a glance; ``rig_check.py`` makes that check quantitatively. If it were
+    inverted, ``config.LATERAL_POSITIVE_IS_RIGHT`` is flipped, never a sign in the analysis.
     """
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch

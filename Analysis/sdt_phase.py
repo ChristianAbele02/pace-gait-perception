@@ -32,13 +32,13 @@ Rates use the log-linear correction (Hautus 1995): +0.5 to each count and +1 to 
 denominator, in every bin. This keeps d' finite in all-correct bins and, applied equally
 to every permutation, does not bias the test.
 
-Timeouts are excluded (unlike the accuracy analysis, where they count as incorrect): with
-no response a trial is neither hit nor false alarm. The number excluded is reported per
-participant. Whether timeouts depend on phase is a separate question, not tested here.
+Timeouts are excluded, as in the accuracy analysis: with no response a trial is neither
+hit nor false alarm. The number excluded is reported per participant. Whether timeouts
+depend on phase is the timeout measure of ``phase_analysis``.
 
-20 bins instead of 40, because each bin needs two rates. With ~1440 pooled walking trials
-that is ~72 trials per bin, ~36 per cell. For the same reason only pooled trials per
-participant are used; a single ~180-trial run would give ~4 trials per cell.
+20 bins instead of 40, because each bin needs two rates. With ~1360 pooled walking trials
+that is ~68 trials per bin, ~34 per cell. For the same reason only pooled trials per
+participant are used; a single ~170-trial run would give ~4 trials per cell.
 
 The test
 --------
@@ -53,6 +53,14 @@ The population test is ``group_agnostic.agnostic_test`` (studentised, rotation-i
 ``S = sum_i |z_i|^2 / s_i^2`` against the participants' own permutations), reused so both
 modules compute the same statistic.
 
+Stride rate (1 cps). The 2 and 4 cps family repeats once per step and cannot see a bias
+that flips with the stance foot. A head roll that reaches the retina (``roll_bias``), or a
+lean of the response towards the stance side, alternates with the foot and sits at 1 cycle
+per stride. The same fit and shuffles are therefore also evaluated at 1 cps, as a single
+separate test outside the Holm family. At 1 cps the stride origin is fixed by the
+stance-foot labels (foot A first), which are consistent across participants, so a
+common-phase Hotelling test (``common_phase.hotelling_t2``) is reported alongside S.
+
 Exploratory. Confirmatory tests remain ``phase_analysis`` (per participant) and
 ``group_agnostic`` (population) on accuracy. This module decomposes an accuracy effect; it
 does not test whether one exists.
@@ -65,6 +73,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -75,6 +84,7 @@ import numpy as np
 
 try:
     from . import bids_io
+    from . import common_phase as cph
     from . import config as C
     from . import group_agnostic as ga
     from . import phase_analysis as pa
@@ -82,6 +92,7 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bids_io
+    import common_phase as cph
     import config as C
     import group_agnostic as ga
     import phase_analysis as pa
@@ -93,6 +104,8 @@ S.apply()
 N_BINS = 20
 N_PERM = 1000
 FREQS = (2.0, 4.0)
+STRIDE_FREQ = 1.0         # separate stride-rate test, outside the Holm family above
+IDX_1CPS = int(np.argmin(np.abs(pa.FREQS - STRIDE_FREQ)))
 ALPHA = 0.05
 # Bins with fewer answered trials are dropped (only relevant for short recordings).
 MIN_BIN_N = 8
@@ -203,12 +216,15 @@ def analyse_measure(phase, is_signal, said_signal, which: str, *,
     obs, obs_beta = pa._spectrum_with_coef(x, y, w)
     i2 = pa.IDX_2CPS
     i4 = pa.IDX_4CPS
-    obs_2, obs_4 = float(obs[i2]), float(obs[i4])
+    i1 = IDX_1CPS
+    obs_2, obs_4, obs_1 = float(obs[i2]), float(obs[i4]), float(obs[i1])
 
     null_2 = np.empty(nperm)
     null_4 = np.empty(nperm)
+    null_1 = np.zeros(nperm)
     null_ab_2 = np.zeros((nperm, 2))
     null_ab_4 = np.zeros((nperm, 2))
+    null_ab_1 = np.zeros((nperm, 2))
     n = phase.size
     for k in range(nperm):
         # shuffle (stimulus, response) pairs against fixed phases
@@ -221,15 +237,18 @@ def analyse_measure(phase, is_signal, said_signal, which: str, *,
         yp = (dpp if which == "dprime" else crp)[use]
         wp = n_bin[use] if w is not None else None
         spec, beta = pa._spectrum_with_coef(centers[use], yp, wp)
-        null_2[k], null_4[k] = float(spec[i2]), float(spec[i4])
+        null_2[k], null_4[k], null_1[k] = float(spec[i2]), float(spec[i4]), float(spec[i1])
         null_ab_2[k] = beta[i2, 1:]
         null_ab_4[k] = beta[i4, 1:]
+        null_ab_1[k] = beta[i1, 1:]
 
     p_2 = float((1 + np.sum(null_2 >= obs_2)) / (1 + nperm))
     p_4 = float((1 + np.sum(null_4 >= obs_4)) / (1 + nperm))
+    p_1 = float((1 + np.sum(null_1 >= obs_1)) / (1 + nperm))
     p_2h, p_4h = (float(v) for v in pa.holm_bonferroni([p_2, p_4]))
     r2_2, amp_2, phi_2, _ = pa.fit_one(x, y, 2.0, w)
     r2_4, amp_4, phi_4, _ = pa.fit_one(x, y, 4.0, w)
+    r2_1, amp_1, phi_1, _ = pa.fit_one(x, y, STRIDE_FREQ, w)
     return {
         "measure": which,
         "centers": centers, "binned": np.where(valid, dp if which == "dprime" else cr, np.nan),
@@ -246,6 +265,10 @@ def analyse_measure(phase, is_signal, said_signal, which: str, *,
         "coef_2cps": obs_beta[i2, 1:], "coef_4cps": obs_beta[i4, 1:],
         "null_coef_2cps": null_ab_2, "null_coef_4cps": null_ab_4,
         "_null_2": null_2, "_null_4": null_4,
+        # stride rate: a separate test, not in the Holm family of 2 and 4 cps
+        "p_1cps": p_1, "r2_at_1cps": float(r2_1), "amp_at_1cps": float(amp_1),
+        "preferred_phase_1cps_rad": float(phi_1),
+        "coef_1cps": obs_beta[i1, 1:], "null_coef_1cps": null_ab_1,
     }
 
 
@@ -411,7 +434,7 @@ def _figure(label, res, out: Path):
 
 
 def _population_figure(rows, pop, out: Path):
-    fig, axg = plt.subplots(1, 3, figsize=(14.5, 4.6))
+    fig, axg = plt.subplots(1, 4, figsize=(19.0, 4.6))
     subs = [r["sub"] for r in rows]
     ypos = np.arange(len(rows))
 
@@ -420,9 +443,9 @@ def _population_figure(rows, pop, out: Path):
     axg[0].barh(ypos, crit, color=S.PURPLE, alpha=0.85)
     S.reference_line(axg[0], x=0.0, label="no bias")
     axg[0].set_yticks(ypos); axg[0].set_yticklabels(subs, fontsize=8)
-    axg[0].set_xlabel("criterion c  (+ = biased against 'right')")
+    axg[0].set_xlabel("criterion c  (> 0: answers 'left' more often)")
     axg[0].legend(fontsize=8)
-    S.panel(axg[0], "a", "Resting response bias", fontsize=10)
+    S.panel(axg[0], "a", "Overall response bias (walking)", fontsize=10)
 
     # b/c) population nulls per measure
     for i, which in enumerate(MEASURES):
@@ -442,16 +465,35 @@ def _population_figure(rows, pop, out: Path):
         S.reference_line(ax, x=r["null_p95"], label="null 95th pct")
         ax.set_xlabel(r"$S=\sum_i |z_i|^2/s_i^2$" + f"  @ {best:.0f} cps")
         ax.set_ylabel("permutations")
-        ax.legend(fontsize=8)
-        S.panel(ax, "bc"[i], f"Population: {LABEL[which]}", fontsize=10)
+        # Legend on the side away from the observed line, so it never sits on it.
+        right = r["statistic"] < r["null_p95"]
+        ax.legend(loc="upper right" if right else "upper left", fontsize=8)
+        S.panel(ax, "bc"[i], f"Stride-phase modulation of {LABEL[which]}", fontsize=10)
 
-    fig.suptitle("Signal-detection decomposition — population",
+    # d) the separate stride-rate test of the criterion
+    ax = axg[3]
+    sr = (pop.get("criterion") or {}).get("stride_rate")
+    if sr:
+        ax.hist(sr["_null_stat"], bins=40, color=S.MIST, edgecolor="white")
+        ax.axvline(sr["statistic"], color=COLOR["criterion"], lw=2.2,
+                   label=f"observed (p={sr['p_value']:.3f})")
+        S.reference_line(ax, x=sr["null_p95"], label="null 95th pct")
+        ax.set_xlabel(r"$S=\sum_i |z_i|^2/s_i^2$  @ 1 cps")
+        ax.set_ylabel("permutations")
+        ax.legend(loc="upper right" if sr["statistic"] < sr["null_p95"] else "upper left",
+                  fontsize=8)
+    S.panel(ax, "d", "Criterion at the stride rate (1 cps)", fontsize=10)
+
+    fig.suptitle("Sensitivity vs response bias over the stride (exploratory), "
+                 f"n = {len(rows)} walking participants",
                  fontsize=13, fontweight="semibold", x=0.012, ha="left")
-    S.caption(fig, f"n = {len(rows)} participants. Population statistic and null are "
-                   "group_agnostic.agnostic_test, unchanged — studentised per "
-                   "participant, rotation-invariant, built from each participant's own "
-                   "shuffles. EXPLORATORY: identifies what an accuracy effect is made "
-                   "of, does not test whether one exists.")
+    S.caption(fig, "Tilt right counts as the signal; timeouts excluded. a: each participant's "
+                   "criterion over all walking trials. b-c: the phase-agnostic population "
+                   "statistic S (the same test as the confirmatory one) for d' and for c, at "
+                   "whichever of 2 and 4 cps has the smaller Holm p; grey = S over shuffles of "
+                   "the (stimulus, response) pairs across phases. d: the same statistic for c "
+                   "at 1 cps, where a bias that flips with the stance foot would appear; a "
+                   "separate test, outside the Holm family.")
     fig.tight_layout(rect=(0, 0.03, 1, 0.92))
     S.save(fig, out)
 
@@ -482,8 +524,20 @@ def population_test(rows) -> dict:
             "by_freq": by_freq, "best_freq": best,
             "n_participants": int(len(have)),
             "significant_any": bool(any(by_freq[f]["significant"] for f in FREQS)),
+            "stride_rate": stride_rate_test(have, which),
         }
     return out
+
+
+def stride_rate_test(have: list[dict], which: str) -> dict:
+    """The separate 1-cps test: phase-agnostic S and the common-phase Hotelling T2."""
+    obs = np.array([r[which]["coef_1cps"] for r in have], float)
+    nper = min(r[which]["null_coef_1cps"].shape[0] for r in have)
+    null = np.stack([r[which]["null_coef_1cps"][:nper] for r in have])
+    res = ga.agnostic_test(obs, null)
+    res["hotelling"] = cph.hotelling_t2(obs)
+    res["n_significant_participants"] = int(sum(r[which]["p_1cps"] < ALPHA for r in have))
+    return res
 
 
 def _json_safe(o):
@@ -524,8 +578,10 @@ def main():
         tr = _pool_subject(subrecs)
         if tr is None:
             continue
+        # crc32, not hash(): str hashes are salted per process, so hash() gave a different
+        # permutation null (and p-value) on every run.
         res = analyse_subject(tr, rng=np.random.default_rng(
-            abs(hash((sub, ses, "sdt"))) % 2**32))
+            zlib.crc32(f"{sub}_{ses}_sdt".encode())))
         if res is None:
             print(f"  {sub} {ses}: below {MIN_TRIALS} responded trials - skipped")
             continue
@@ -570,6 +626,9 @@ def main():
             print(f"    {LABEL[which]:<16}: S={r['statistic']:.2f} vs null mean "
                   f"{r['null_mean']:.2f} @ {f:.0f} cps, Holm p={r['p_holm']:.4f} -> "
                   f"{'MODULATED' if r['significant'] else 'n.s.'}")
+            sr = d["stride_rate"]
+            print(f"    {'':<16}  stride rate 1 cps: S={sr['statistic']:.2f}, p={sr['p_value']:.4f}; "
+                  f"common phase F={sr['hotelling']['f']:.2f}, p={sr['hotelling']['p_value']:.4f}")
         d_sig = pop.get("dprime", {}).get("significant_any")
         c_sig = pop.get("criterion", {}).get("significant_any")
         if d_sig and not c_sig:

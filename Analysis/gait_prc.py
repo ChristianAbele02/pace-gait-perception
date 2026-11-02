@@ -212,69 +212,94 @@ def _binned(ph, y, nb=PRC_BINS):
 
 
 def _figure(by_sub: dict[str, list[dict]], tests: dict, out: Path, rng) -> None:
-    """Plot PRCs with random-time bands, shift time course and shift distributions."""
+    """Plot group PRCs for onsets and presses against a random-time band, the time course
+    and the pooled shift distributions. Participants thin and grey, their mean bold."""
     subs = sorted(by_sub)
     fig, ax = plt.subplots(2, 2, figsize=(11, 8))
     x = (np.arange(PRC_BINS) + 0.5) * 100 / PRC_BINS
+    n_null = 300
     for col_i, kind in enumerate(("onset", "press")):
         a = ax[0, col_i]
-        for i, s in enumerate(subs):
-            c = S.CYCLE[i % len(S.CYCLE)]
+        curves, nulls = [], []
+        for s in subs:
             es, ep = _pool(by_sub[s], kind)
             rs, rp = _pool(by_sub[s], "random")
             if len(es) < 20:
                 continue
-            m, se = _binned(ep, es[:, K_REPORT - 1])
+            m, _ = _binned(ep, es[:, K_REPORT - 1])
             # null band from random sets of the same size
             null = np.array([_binned(rp[p], rs[p, K_REPORT - 1])[0] for p in
-                             (rng.choice(len(rs), len(es), replace=False) for _ in range(300))])
-            lo, hi = np.nanpercentile(null, [2.5, 97.5], axis=0)
-            a.fill_between(x, lo, hi, color=c, alpha=0.12, lw=0)
-            a.errorbar(x, m, yerr=se, color=c, marker="o", ms=4, lw=1.5, capsize=2,
-                       label=f"{S.nice_label(s)} (n={len(es)})")
+                             (rng.choice(len(rs), len(es), replace=False) for _ in range(n_null))])
+            curves.append(m); nulls.append(null)
+            a.plot(x, m, color=S.MIST, lw=0.9, zorder=1)
+        if curves:
+            cur = np.array(curves)
+            mu = np.nanmean(cur, 0)
+            se = np.nanstd(cur, 0, ddof=1) / np.sqrt(len(cur))
+            # Group null: draw k of every participant's null, averaged across participants.
+            gnull = np.nanmean(np.stack(nulls), axis=0)
+            lo, hi = np.nanpercentile(gnull, [2.5, 97.5], axis=0)
+            a.fill_between(x, lo, hi, color=S.GREY, alpha=0.18, lw=0, zorder=0,
+                           label="random times, 95 %")
+            a.errorbar(x, mu, yerr=se, color=S.BLUE, marker="o", ms=4, lw=2, capsize=2,
+                       zorder=3, label=f"mean ± SEM, n = {len(cur)}")
+        a.plot([], [], color=S.MIST, lw=0.9, label="one participant")
         a.axhline(0, color=S.GREY, lw=0.8)
         a.set_xlabel("stride phase of the event (%)")
         a.set_ylabel(f"shift after {K_REPORT} steps (% of a step)")
-        a.legend(frameon=False, fontsize=8)
-        S.panel(a, "ab"[col_i], f"Phase response curve: {'stimulus onset' if kind == 'onset' else 'button press'}",
-                fontsize=10)
+        a.legend(loc="upper right", ncol=3, fontsize=8)
+        lo_, hi_ = a.get_ylim()
+        a.set_ylim(lo_, hi_ + 0.2 * (hi_ - lo_))
+        S.panel(a, "ab"[col_i], "Phase response curve: "
+                + ("stimulus onset" if kind == "onset" else "button press"), fontsize=10)
     a = ax[1, 0]
     k = np.arange(1, K_MAX + 1)
-    for i, s in enumerate(subs):
-        c = S.CYCLE[i % len(S.CYCLE)]
-        t = tests[s]
-        for kind, ls in (("onset", "-"), ("press", "--")):
-            if "time_course_pct_step" in t.get(kind, {}):
-                a.plot(k, np.asarray(t[kind]["time_course_pct_step"])
-                       - np.asarray(t[kind]["random_time_course_pct_step"]),
-                       ls, color=c, marker="o", ms=3,
-                       label=f"{S.nice_label(s)} {kind}")
+    for kind, ls, col in (("onset", "-", S.BLUE), ("press", "--", S.ORANGE)):
+        rows = []
+        for s in subs:
+            t = tests[s].get(kind, {})
+            if "time_course_pct_step" in t:
+                d = (np.asarray(t["time_course_pct_step"])
+                     - np.asarray(t["random_time_course_pct_step"]))
+                rows.append(d)
+                a.plot(k, d, ls, color=S.MIST, lw=0.9, zorder=1)
+        if rows:
+            r = np.array(rows)
+            a.errorbar(k, r.mean(0), yerr=r.std(0, ddof=1) / np.sqrt(len(r)), fmt=ls + "o",
+                       color=col, ms=4, lw=2, capsize=2, zorder=3,
+                       label=f"{'stimulus onset' if kind == 'onset' else 'button press'}, mean ± SEM")
     a.axhline(0, color=S.GREY, lw=0.8)
     a.set_xlabel("steps after the event")
     a.set_ylabel("shift vs random times (% of a step)")
-    a.legend(frameon=False, fontsize=8)
+    a.legend(loc="upper left", fontsize=8)
     S.panel(a, "c", "Does the shift persist?", fontsize=10)
     a = ax[1, 1]
-    for i, s in enumerate(subs):
-        c = S.CYCLE[i % len(S.CYCLE)]
-        rs, _ = _pool(by_sub[s], "random")
-        es, _ = _pool(by_sub[s], "onset")
-        bins = np.linspace(-30, 30, 41)
-        a.hist(rs[:, K_REPORT - 1], bins=bins, density=True, histtype="step", color=c, ls=":")
-        if len(es):
-            a.hist(es[:, K_REPORT - 1], bins=bins, density=True, histtype="step", color=c, lw=1.8,
-                   label=f"{S.nice_label(s)} onsets")
-    a.plot([], [], color=S.GREY, ls=":", label="random times")
+    bins = np.linspace(-30, 30, 41)
+    pooled = {kind: [] for kind in ("random", "onset", "press")}
+    for s in subs:
+        for kind in pooled:
+            es, _ = _pool(by_sub[s], kind)
+            if len(es):
+                pooled[kind].append(es[:, K_REPORT - 1])
+    for kind, col, ls, lw in (("random", S.GREY, "-", 2.4), ("onset", S.BLUE, "-", 1.5),
+                              ("press", S.ORANGE, "--", 1.5)):
+        if pooled[kind]:
+            v = np.concatenate(pooled[kind])
+            a.hist(v, bins=bins, density=True, histtype="step", color=col, ls=ls, lw=lw,
+                   label={"random": "random times", "onset": "stimulus onsets",
+                          "press": "button presses"}[kind])
     a.set_xlabel(f"shift after {K_REPORT} steps (% of a step)")
     a.set_ylabel("density")
-    a.legend(frameon=False, fontsize=8)
-    S.panel(a, "d", "Event shifts vs background", fontsize=10)
-    fig.suptitle("Do the task's events reset the gait rhythm? (exploratory)", fontsize=13,
-                 fontweight="semibold", x=0.012, ha="left")
+    a.legend(loc="upper right", fontsize=8)
+    S.panel(a, "d", "Event shifts vs background, all participants", fontsize=10)
+    fig.suptitle(f"Do the task's events reset the gait rhythm? (exploratory), n = {len(subs)} "
+                 "participants", fontsize=13, fontweight="semibold", x=0.012, ha="left")
     S.caption(fig, "Shift = how much earlier (−) or later (+) the next steps came than the "
-                   "pre-event rhythm predicts. Bands: 95 % range of the same curve for random "
-                   "times (the rhythm's own fluctuation). Onset and press are ~0.8 s apart and "
-                   "not independent. PRC method after Funato et al. (2016).")
+                   "pre-event rhythm predicts. a-b: each participant's mean shift per phase "
+                   "bin (grey) and their mean; band = 95 % range of that mean for random "
+                   "times, i.e. the rhythm's own fluctuation. c: shift minus the random-time "
+                   "shift over the following steps. Onset and press are ~0.8 s apart and not "
+                   "independent. Method after Funato et al. (2016).")
     fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     S.save(fig, out)
 

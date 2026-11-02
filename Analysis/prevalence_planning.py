@@ -49,8 +49,11 @@ TRUE_PREV = [0.25, 0.50, 0.75]      # ground-truth population prevalence
 N_GRID = [5, 10, 15, 20, 30, 36, 50]
 
 
-def _hpdi_width_for_k(k: int, n: int) -> tuple[float, float, float]:
-    _, _, mapv, (lo, hi) = bayesian_prevalence(k, n, alpha=ALPHA)
+def _hpdi_width_for_k(k: int, n: int, sens: float) -> tuple[float, float, float]:
+    # The posterior must assume the same sensitivity the data were simulated with, as
+    # population.py does with its measured s; with the default s = 1 it is the naive
+    # lower bound, biased toward 0 and spuriously narrow when s is small.
+    _, _, mapv, (lo, hi) = bayesian_prevalence(k, n, alpha=ALPHA, sensitivity=sens)
     return mapv, lo, hi
 
 
@@ -60,7 +63,7 @@ def _simulate(true_prev: float, sens: float, n: int):
     ks = RNG.binomial(n, theta, size=N_MC)
     maps, los, his = [], [], []
     for k in np.unique(ks):
-        m, lo, hi = _hpdi_width_for_k(int(k), n)
+        m, lo, hi = _hpdi_width_for_k(int(k), n, sens)
         w = np.sum(ks == k)
         maps += [m] * w
         los += [lo] * w
@@ -104,7 +107,7 @@ def _fig(out: Path):
     theta = tp * s + (1 - tp) * ALPHA
     for n, col in [(10, S.ORANGE), (36, S.BLUE)]:
         k = int(round(n * theta))
-        g, post, mapv, (lo, hi) = bayesian_prevalence(k, n, alpha=ALPHA)
+        g, post, mapv, (lo, hi) = bayesian_prevalence(k, n, alpha=ALPHA, sensitivity=s)
         ax[0].plot(g, post, color=col, lw=2, label=f"N = {n} (k = {k}), HPDI width {hi-lo:.2f}")
         ax[0].axvspan(lo, hi, color=col, alpha=0.12)
         ax[0].plot(mapv, post.max(), "o", color=col)
@@ -128,7 +131,11 @@ def _fig(out: Path):
 
     fig.suptitle("Population-prevalence planning", fontsize=12, fontweight="semibold",
                  x=0.012, ha="left")
-    S.caption(fig, "Moderate per-participant power (s = 0.45), true prevalence 0.5.")
+    S.caption(fig, "Posterior of the population prevalence (Ince et al. 2022) given k of N "
+                   "participants significant, with per-participant power s and false-positive "
+                   "rate 0.05 built into the model. a: moderate power (s = 0.45), true "
+                   "prevalence 0.5, shaded = 96 % HPDI. b: median HPDI width over simulated "
+                   "studies at true prevalence 0.5.")
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     S.save(fig, out)
 

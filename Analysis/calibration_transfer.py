@@ -229,9 +229,10 @@ def _summary(units: pd.DataFrame) -> dict:
 # Figure
 # ===========================================================================
 def _figure(blocks: pd.DataFrame, units: pd.DataFrame, summ: dict, stem: Path) -> None:
-    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(S.COL2_IN, 3.3),
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(S.COL2_IN, 3.9),
                                      gridspec_kw={"width_ratios": [1.45, 1.0]})
-    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.17, top=0.88, wspace=0.32)
+    # Legends go under the panels: inside, either one would sit on data.
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.3, top=0.9, wspace=0.32)
 
     # a: THR accuracy per block and participant
     subs = sorted(blocks["participant"].unique())
@@ -246,9 +247,10 @@ def _figure(blocks: pd.DataFrame, units: pd.DataFrame, summ: dict, stem: Path) -
         for j, (_, r) in enumerate(g.iterrows()):
             x = i + (j - (len(g) - 1) / 2) * min(0.08, 0.7 / max(len(g), 1))
             col = S.COND[r["condition"]]
-            filled = r["behaviour"] == "include"
-            ax_a.plot(x, r["thr_accuracy"], "o", ms=4.2, mec=col, mew=1.0,
-                      mfc=col if filled else "white", zorder=3)
+            if r["behaviour"] == "include":
+                ax_a.plot(x, r["thr_accuracy"], "o", ms=4.2, color=col, zorder=3)
+            else:      # a cross, so open circles keep the one meaning they have in b
+                ax_a.plot(x, r["thr_accuracy"], "x", ms=4.2, mew=1.1, color=col, zorder=3)
     ax_a.set_xticks(range(len(subs)))
     ax_a.set_xticklabels([s.replace("sub-", "") for s in subs])
     ax_a.set_xlabel("Participant")
@@ -259,10 +261,12 @@ def _figure(blocks: pd.DataFrame, units: pd.DataFrame, summ: dict, stem: Path) -
     S.panel(ax_a, "a", "Blocks against the 75 % target")
     handles = [plt.Line2D([], [], ls="", marker="o", ms=4.5, mec=S.COND[c], mfc=S.COND[c],
                           label=c) for c in ("standing", "walking")]
-    handles.append(plt.Line2D([], [], ls="", marker="o", ms=4.5, mec=S.GREY, mfc="white",
-                              label="excluded"))
-    handles.append(plt.Rectangle((0, 0), 1, 1, color=S.GRID, label="sampling range"))
-    ax_a.legend(handles=handles, loc="lower left", ncol=2, fontsize=8)
+    handles.append(plt.Line2D([], [], ls="", marker="x", ms=4.5, mew=1.1, color=S.GREY,
+                              label="excluded block"))
+    handles.append(plt.Rectangle((0, 0), 1, 1, color=S.GRID,
+                                 label="95 % range if on target"))
+    ax_a.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3,
+                fontsize=8)
 
     # b: calibrated vs block threshold per calibration
     lim = (0.25, 8.0)
@@ -297,14 +301,16 @@ def _figure(blocks: pd.DataFrame, units: pd.DataFrame, summ: dict, stem: Path) -
     ax_b.set_ylabel("Threshold in the blocks")
     S.panel(ax_b, "b", "Calibration vs blocks")
     hb = [plt.Line2D([], [], ls="", marker="o", ms=5, mec=S.INK, mfc=S.INK,
-                     label="outside sampling range"),
+                     label="missed the target"),
           plt.Line2D([], [], ls="", marker="o", ms=5, mec=S.INK, mfc="white",
-                     label="within it"),
+                     label="transferred"),
           plt.Line2D([], [], ls="", marker="D", ms=4.5, mec=S.INK, mfc=S.INK,
-                     label="unreliable calibration"),
+                     label="unreliable calib."),
           plt.Line2D([], [], ls="", marker="v", ms=5, mec=S.INK, mfc=S.INK,
-                     label="at ceiling (bound only)")]
-    ax_b.legend(handles=hb, loc="upper left", fontsize=8, handletextpad=0.3)
+                     label="ceiling (bound)"),
+          plt.Line2D([], [], color=S.GREY, lw=0.8, ls=":", label="factor 2")]
+    ax_b.legend(handles=hb, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2,
+                fontsize=8, handletextpad=0.3, columnspacing=0.8)
     S.save_pub(fig, stem)
 
 
@@ -312,6 +318,7 @@ def _figure(blocks: pd.DataFrame, units: pd.DataFrame, summ: dict, stem: Path) -
 # Main
 # ===========================================================================
 def analyse() -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Blocks, per-calibration units and the summary of how the calibrations transfer."""
     rng = np.random.default_rng(SEED)
     blocks = _blocks()
     units = _units(blocks, rng) if not blocks.empty else pd.DataFrame()

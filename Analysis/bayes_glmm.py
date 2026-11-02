@@ -46,9 +46,18 @@ individual-phase oscillators and reports how often each Bayes factor exceeds 3.
 Outputs (``derivatives/bayes_glmm/``): ``bayes_glmm.json`` (estimates, Bayes factors,
 sampler diagnostics), ``bayes_glmm_participants.tsv`` and ``figures/bayes_glmm.png|pdf``.
 
+Press-locked variant (``--lock press``, exploratory). The same accuracy model with the
+phase read at the button press (onset + RT) instead of the onset; standing trials use the
+same virtual clock, read at onset + RT. Only answered trials with RT >= ``RT_MIN_S`` enter.
+Log RT is not modelled here: the press phase is built from the RT, so the two are tied by
+construction and need the RT-shuffle null of ``press_accuracy.py``. An oscillation locked to
+the onset is attenuated in this model by the spread of the RTs (``press_accuracy`` reports
+the factor), and vice versa. Outputs carry the stem ``bayes_glmm_press``.
+
 Usage::
 
     python -m Analysis.bayes_glmm
+    python -m Analysis.bayes_glmm --lock press    # accuracy against the phase at the press
     python -m Analysis.bayes_glmm --validate      # slow: simulation check of the BFs
 """
 from __future__ import annotations
@@ -96,6 +105,9 @@ PRIORS = {
            "mu": 0.05, "tau": 0.05, "sigma": 0.5},
 }
 MEASURES = ("accuracy", "rt")
+# Measures fitted per phase reference (see the module docstring for why press is accuracy only).
+LOCK_MEASURES = {"onset": MEASURES, "press": ("accuracy",)}
+LOCK_STEM = {"onset": "bayes_glmm", "press": "bayes_glmm_press"}
 # One XLA host device per chain for parallel chains; must be set before importing JAX.
 os.environ.setdefault("XLA_FLAGS", f"--xla_force_host_platform_device_count={N_CHAINS}")
 
@@ -109,7 +121,9 @@ def available() -> bool:
 # ===========================================================================
 # Data
 # ===========================================================================
-def _walking_rows(rec) -> pd.DataFrame | None:
+def _walking_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
+    """Trials of one walking block with the stride phase at onset or, for
+    ``lock="press"``, at the press."""
     npz = bids_io.deriv_dir("gait", rec.sub, rec.ses) / f"{rec.label()}_gait.npz"
     if not npz.exists():
         return None
@@ -119,24 +133,30 @@ def _walking_rows(rec) -> pd.DataFrame | None:
     tp = pa._trial_phases(rec, g["troughs"], step_foot, tg, pa.continuous_phase(g))
     if tp is None:
         return None
-    ev = tp[0]
-    return pd.DataFrame({"sub": rec.sub, "walk": 1, "phase": ev["phase_target"].to_numpy(float),
+    ev = tp[0] if lock == "onset" else tp[1]
+    col = "phase_target" if lock == "onset" else "phase_response"
+    return pd.DataFrame({"sub": rec.sub, "walk": 1, "phase": ev[col].to_numpy(float),
                          "difficulty": ev["difficulty"].to_numpy(),
                          "response_correct": ev["response_correct"].to_numpy(float),
                          "rt": ev["response_time"].to_numpy(float)})
 
 
 def _stride_s(sub: str) -> float:
-    """Median stride time over the participant's walking blocks (any gate scope)."""
+    """Median stride time over the participant's walking blocks in the gait scope."""
     vals = []
+    out = bids_io.excluded_recordings(scope="gait")
     for j in (C.DERIV_DIR / "gait" / sub).glob("ses-*/*_acq-walking_*_gait.json"):
+        if j.name[: -len("_gait.json")] in out:
+            continue
         v = json.loads(j.read_text(encoding="utf-8")).get("stride_duration_s")
         if v:
             vals.append(float(v))
     return float(np.median(vals)) if vals else DEFAULT_STRIDE_S
 
 
-def _standing_rows(rec) -> pd.DataFrame | None:
+def _standing_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
+    """Trials of one standing block on the virtual stride clock, read at onset or,
+    for ``lock="press"``, at onset + RT."""
     ev = bids_io.load_events(rec)
     ev = ev[(ev["is_training"] == 0) & ev["onset"].notna()]
     if ev.empty:
@@ -144,30 +164,38 @@ def _standing_rows(rec) -> pd.DataFrame | None:
     stride = _stride_s(rec.sub)
     seed = SEED + int.from_bytes(rec.label().encode(), "little") % 100_003
     start = np.random.default_rng(seed).uniform(0, stride)
-    phase = 100.0 * (((ev["onset"].to_numpy(float) + start) / stride) % 1.0)
+    t = ev["onset"].to_numpy(float)
+    if lock == "press":
+        t = t + ev["response_time"].to_numpy(float)          # NaN for a timeout
+    phase = 100.0 * (((t + start) / stride) % 1.0)
     return pd.DataFrame({"sub": rec.sub, "walk": 0, "phase": phase,
                          "difficulty": ev["difficulty"].to_numpy(),
                          "response_correct": ev["response_correct"].to_numpy(float),
                          "rt": ev["response_time"].to_numpy(float)})
 
 
-def gather_trials() -> pd.DataFrame:
-    """Answered trials of all walking and standing blocks in the behaviour scope."""
+def gather_trials(lock: str = "onset") -> pd.DataFrame:
+    """Answered trials of all walking and standing blocks in the behaviour scope, with the
+    phase at onset or, with ``lock="press"``, at the press."""
     frames = []
     for rec in bids_io.find_recordings():
-        f = _walking_rows(rec) if rec.condition == "walking" else (
-            _standing_rows(rec) if rec.condition == "standing" else None)
+        f = _walking_rows(rec, lock) if rec.condition == "walking" else (
+            _standing_rows(rec, lock) if rec.condition == "standing" else None)
         if f is not None and len(f):
             frames.append(f)
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
     df = df[df["response_correct"].isin([0, 1]) & df["phase"].notna()].copy()
+    if lock == "press":                     # an anticipation is not a response to the target
+        df = df[df["rt"] >= RT_MIN_S].copy()
     df["correct"] = df["response_correct"].astype(int)
     return df.reset_index(drop=True)
 
 
 def _arrays(df: pd.DataFrame, measure: str) -> dict:
+    """Model inputs for one measure: participant index, condition, difficulty dummies,
+    the cos/sin harmonics at ``FREQS`` and the outcome."""
     if measure == "rt":
         df = df[np.isfinite(df["rt"]) & (df["rt"] >= RT_MIN_S)]
     subs = sorted(df["sub"].unique())
@@ -188,6 +216,8 @@ def _arrays(df: pd.DataFrame, measure: str) -> dict:
 # Model
 # ===========================================================================
 def _model(sub, walk, hard, easy, harm, n_sub, measure, y=None):
+    """NumPyro model: participant intercepts and walking slopes, difficulty effects, and
+    per condition and frequency a shared phase with isotropic participant deviations."""
     import jax.numpy as jnp
     import numpyro
     import numpyro.distributions as dist
@@ -248,6 +278,7 @@ def fit(arr: dict, measure: str, *, chains=N_CHAINS, warmup=N_WARMUP, samples=N_
 # Summaries
 # ===========================================================================
 def _hdi(x, prob=0.95):
+    """Narrowest interval holding ``prob`` of the draws in ``x``."""
     x = np.sort(np.asarray(x).ravel())
     n = len(x)
     k = int(np.floor(prob * n))
@@ -317,6 +348,8 @@ def summarise(post: dict, measure: str, arr: dict) -> dict:
 
 
 def participant_table(post: dict, arr: dict, measure: str) -> pd.DataFrame:
+    """Per participant, frequency and condition: the posterior median of the
+    modulation amplitude with its 5-95 % range, in hit-rate or log-RT units."""
     scale = (np.mean(arr["y"]) * (1 - np.mean(arr["y"]))) if measure == "accuracy" else 1.0
     rows = []
     for i, s in enumerate(arr["subs"]):
@@ -338,6 +371,8 @@ def participant_table(post: dict, arr: dict, measure: str) -> pd.DataFrame:
 # Figure
 # ===========================================================================
 def _figure(results: dict, posts: dict, stem: Path) -> None:
+    """Figure: posterior draws of the shared 2-cps accuracy coefficient, the RMS
+    per-person modulation per measure and frequency, and the walking main effect."""
     fig, axs = plt.subplots(1, 3, figsize=(S.COL2_IN, 2.9),
                             gridspec_kw={"width_ratios": [1.0, 1.3, 0.75]})
     fig.subplots_adjust(left=0.075, right=0.975, bottom=0.2, top=0.86, wspace=0.62)
@@ -357,15 +392,18 @@ def _figure(results: dict, posts: dict, stem: Path) -> None:
     ax.set_aspect("equal")
     ax.set_xlabel("cos (pp)")
     ax.set_ylabel("sin (pp)")
-    S.panel(ax, "a", "Shared phase, 2 cps")
+    S.panel(ax, "a", "Common phase")
+    # Points are posterior draws of the population-mean 2-cps accuracy coefficient.
     ax.legend(handles=[plt.Line2D([], [], ls="", marker="o", ms=4, color=S.COND[c], label=c)
                        for c in ("walking", "standing")], loc="upper left", fontsize=8,
-              handletextpad=0.2)
+              handletextpad=0.2, title="2 cps, draws", title_fontsize=8)
 
     # b: individual modulation (RMS amplitude), walking vs standing, both measures
     ax = axs[1]
     labels, y = [], 0
     for meas, unit_scale, name in (("accuracy", 100, "acc"), ("rt", 100, "RT")):
+        if meas not in results:
+            continue
         for f in FREQS:
             for cond in ("walk", "stand"):
                 r = results[meas]["by_frequency"][f"{f:g}cps"][cond]
@@ -377,29 +415,35 @@ def _figure(results: dict, posts: dict, stem: Path) -> None:
             labels.append((y + 1.5, f"{name} {f:g} cps"))
             y -= 0.6
     ax.axvline(DAVIDSON_RMS_HITRATE * 100, color=S.GREY, ls="--", lw=0.9,
-               label="Davidson (acc)")
-    ax.set_ylim(y - 0.9, 0.5)                      # room for the legend
-    ax.legend(loc="lower right", fontsize=8, handlelength=1.4)
+               label="Davidson, acc.")
+    ax.set_ylim(y - 2.9, 0.5)                      # room for the legend below the bars
+    h, _ = ax.get_legend_handles_labels()
+    h = [plt.Line2D([], [], color=S.COND[c], lw=1.6, marker="o", ms=4,
+                    label=f"{c}, 95 % HDI") for c in ("walking", "standing")] + h
+    ax.legend(handles=h, loc="lower right", fontsize=8, handlelength=1.4)
     ax.set_yticks([p for p, _ in labels])
     ax.set_yticklabels([t for _, t in labels])
-    ax.set_xlabel("RMS amplitude (pp or %)")
+    ax.set_xlabel("RMS amplitude (acc. pp, RT %)")
     ax.grid(axis="y", visible=False)
-    S.panel(ax, "b", "Per-person modulation")
+    S.panel(ax, "b", "Individual modulation")
 
     # c: walking main effect
     ax = axs[2]
     ra = results["accuracy"]["walking_main_effect"]
-    rr = results["rt"]["walking_main_effect"]
-    for yy, est, (lo, hi) in ((1, ra["pp"], ra["hdi95_pp"]), (0, rr["percent"], rr["hdi95_percent"])):
+    rows = [(1, "acc (pp)", ra["pp"], ra["hdi95_pp"])]
+    if "rt" in results:
+        rr = results["rt"]["walking_main_effect"]
+        rows.append((0, "RT (%)", rr["percent"], rr["hdi95_percent"]))
+    for yy, _, est, (lo, hi) in rows:
         ax.plot([lo, hi], [yy, yy], color=S.INK, lw=1.6)
         ax.plot(est, yy, "o", ms=4.5, color=S.INK)
     ax.axvline(0, color=S.GREY, lw=0.9)
-    ax.set_yticks([1, 0])
-    ax.set_yticklabels(["acc (pp)", "RT (%)"])
+    ax.set_yticks([r[0] for r in rows])
+    ax.set_yticklabels([r[1] for r in rows])
     ax.set_ylim(-0.6, 1.6)
-    ax.set_xlabel("walking − standing")
+    ax.set_xlabel("walk − stand")
     ax.grid(axis="y", visible=False)
-    S.panel(ax, "c", "Walking")
+    S.panel(ax, "c", "Main effect")
     S.save_pub(fig, stem)
 
 
@@ -456,7 +500,8 @@ def validate(n_rep: int = 20) -> dict:
 # Main
 # ===========================================================================
 def _describe(results: dict) -> None:
-    for meas in MEASURES:
+    """Print the diagnostics, effects and Bayes factors of each fitted measure."""
+    for meas in (m for m in MEASURES if m in results):
         r = results[meas]
         print(f"  [{meas}] diagnostics: {r['diagnostics']}")
         we = r["walking_main_effect"]
@@ -479,20 +524,23 @@ def _describe(results: dict) -> None:
 
 
 def main(argv=None) -> dict | None:
-    """Fit both measures, summarise, and write outputs and figure."""
+    """Fit the measures for the chosen phase reference, summarise, and write outputs and figure."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--validate", action="store_true", help="simulation check of the BFs")
     ap.add_argument("--reps", type=int, default=20)
+    ap.add_argument("--lock", choices=tuple(LOCK_MEASURES), default="onset",
+                    help="read the stride phase at the stimulus onset or at the press")
     ap.add_argument("--figure-only", action="store_true",
                     help="redraw the figure from the saved results and draws")
     args = ap.parse_args(argv)
+    measures, stem = LOCK_MEASURES[args.lock], LOCK_STEM[args.lock]
     if args.figure_only:
         out = bids_io.deriv_dir("bayes_glmm")
-        results = json.loads((out / "bayes_glmm.json").read_text(encoding="utf-8"))
-        d = np.load(out / "bayes_glmm_draws.npz")
+        results = json.loads((out / f"{stem}.json").read_text(encoding="utf-8"))
+        d = np.load(out / f"{stem}_draws.npz")
         posts = {m: {k[len(m) + 1:]: d[k] for k in d.files if k.startswith(m + "_")}
-                 for m in MEASURES}
-        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / "bayes_glmm")
+                 for m in measures}
+        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / stem)
         return results
     if not available():
         print("NumPyro/JAX not installed (pip install 'jax[cpu]' numpyro) - stage skipped.")
@@ -500,16 +548,19 @@ def main(argv=None) -> dict | None:
     if args.validate:
         return validate(args.reps)
 
-    df = gather_trials()
-    bids_io.gate_report("bayes_glmm", condition=("standing", "walking"),
+    title = ("=== Bayesian mixed models: stride phase x condition (SECONDARY) ===" if
+             args.lock == "onset" else
+             "=== Bayesian mixed model: accuracy x stride phase at the press (EXPLORATORY) ===")
+    df = gather_trials(args.lock)
+    bids_io.gate_report(stem, condition=("standing", "walking"),
                         analysed_subjects=sorted(df["sub"].unique()) if len(df) else [])
     if df.empty or df["sub"].nunique() < 2:
         print("Fewer than 2 participants with trials - nothing to fit.")
         return None
-    arrs = {meas: _arrays(df, meas) for meas in MEASURES}
+    arrs = {meas: _arrays(df, meas) for meas in measures}
     out = bids_io.deriv_dir("bayes_glmm")
-    outputs = [out / "bayes_glmm.json", out / "bayes_glmm_participants.tsv",
-               out / "bayes_glmm_draws.npz"]
+    outputs = [out / f"{stem}.json", out / f"{stem}_participants.tsv",
+               out / f"{stem}_draws.npz"]
     # Reuse the fit if trial arrays, code, priors, sampler settings and library versions
     # are unchanged.
     import jax
@@ -518,41 +569,45 @@ def main(argv=None) -> dict | None:
         stage_cache.code_digest("bayes_glmm.py"), jax.__version__, numpyro.__version__,
         PRIORS, FREQS, RT_MIN_S, [N_CHAINS, N_WARMUP, N_SAMPLES, SEED],
         *[[arrs[m]["subs"], arrs[m]["sub"], arrs[m]["walk"], arrs[m]["hard"],
-           arrs[m]["easy"], arrs[m]["harm"], arrs[m]["y"]] for m in MEASURES])
-    if stage_cache.is_fresh("bayes_glmm", "fit", fp, outputs):
-        print("=== Bayesian mixed models: stride phase x condition (SECONDARY) ===")
+           arrs[m]["easy"], arrs[m]["harm"], arrs[m]["y"]] for m in measures])
+    key = "fit" if args.lock == "onset" else f"fit_{args.lock}"
+    if stage_cache.is_fresh("bayes_glmm", key, fp, outputs):
+        print(title)
         print("  inputs, code and settings unchanged since the last fit: reusing it")
         results = json.loads(outputs[0].read_text(encoding="utf-8"))
         d = np.load(outputs[2])
         posts = {m: {k[len(m) + 1:]: d[k] for k in d.files if k.startswith(m + "_")}
-                 for m in MEASURES}
-        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / "bayes_glmm")
+                 for m in measures}
+        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / stem)
     else:
         results, posts, tabs = {}, {}, []
-        for meas in MEASURES:
+        for meas in measures:
             arr = arrs[meas]
             post, diag = fit(arr, meas)
             posts[meas] = post
             results[meas] = {"n_trials": int(len(arr["y"])), "n_participants": len(arr["subs"]),
                              "diagnostics": diag, **summarise(post, meas, arr)}
             tabs.append(participant_table(post, arr, meas))
+        desc = ("Bayesian mixed models of stride phase (walking) and a virtual stride phase "
+                "(standing) on accuracy and log RT, NumPyro NUTS (bayes_glmm.py). Secondary "
+                "to the phase-agnostic confirmatory test." if args.lock == "onset" else
+                "EXPLORATORY. The accuracy model of bayes_glmm.py with the stride phase read "
+                "at the button press (onset + RT; standing: the virtual clock at onset + RT). "
+                "Answered trials with RT >= RT_MIN_S.")
         outputs[0].write_text(json.dumps({
-            "Description": "Bayesian mixed models of stride phase (walking) and a virtual "
-                           "stride phase (standing) on accuracy and log RT, NumPyro NUTS "
-                           "(bayes_glmm.py). Secondary to the phase-agnostic confirmatory "
-                           "test.",
+            "Description": desc, "Phase_reference": args.lock,
             "Priors": PRIORS, "Frequencies_cps": list(FREQS), "BF_evidence": BF_EVIDENCE,
             "Units": "accuracy: hit-rate at the base rate; rt: log RT (about a proportion)",
             **results}, indent=2, default=float), encoding="utf-8")
         pd.concat(tabs).to_csv(outputs[1], sep="\t", index=False)
         np.savez_compressed(outputs[2],
-                            **{f"{m}_{k}": posts[m][k] for m in MEASURES
+                            **{f"{m}_{k}": posts[m][k] for m in measures
                                for k in ("mu_walk", "mu_stand", "tau_walk", "tau_stand", "b")})
-        stage_cache.record("bayes_glmm", "fit", fp, outputs)
-        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / "bayes_glmm")
-        print("=== Bayesian mixed models: stride phase x condition (SECONDARY) ===")
+        stage_cache.record("bayes_glmm", key, fp, outputs)
+        _figure(results, posts, bids_io.fig_dir("bayes_glmm") / stem)
+        print(title)
     _describe(results)
-    bad = [m for m in MEASURES if results[m]["diagnostics"]["max_r_hat"] > 1.01
+    bad = [m for m in measures if results[m]["diagnostics"]["max_r_hat"] > 1.01
            or results[m]["diagnostics"]["divergences"]]
     if bad:
         print(f"  ! sampler warnings for {bad}: check r_hat / divergences before reading")

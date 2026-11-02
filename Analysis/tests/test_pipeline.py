@@ -2199,7 +2199,8 @@ def test_gait_prc_detects_an_injected_phase_advance():
 
 def test_head_fixation_point_and_pitch_axis_recovered():
     """Pitch that exactly fixes a target at 1.2 m gives a 1.2 m fixation point; the pitch
-    axis is found from a rotation about room x at the step frequency."""
+    axis is found from a rotation about x at the step frequency, oriented towards -x (the
+    mocap frame's z points backward, so that is nose-down positive)."""
     import head_stability as hs
     fs, step_hz = 90.0, 1.7
     t = np.arange(0, 120, 1 / fs)
@@ -2211,7 +2212,74 @@ def test_head_fixation_point_and_pitch_axis_recovered():
     rv = np.column_stack([pitch * 20, 3 * np.sin(2 * np.pi * step_hz / 2 * t),
                           2 * np.sin(2 * np.pi * step_hz / 2 * t + 1)]) + rng.normal(0, .1, (t.size, 3))
     axis, share = hs.pitch_axis(rv, fs, step_hz)
-    assert axis[0] > 0.95 and share > 0.5, (axis, share)
+    assert axis[0] < -0.95 and share > 0.5, (axis, share)
+    # the same pitch 60 deg late: the size still says 1.2 m, the lag is read as such,
+    # and the least-squares distance shrinks by cos(60 deg)
+    late = np.degrees(np.arctan(0.01 * np.cos(2 * np.pi * step_hz * t - np.pi / 3) / 1.2))
+    _, phase, gain = hs._step_coupling(y, late, fs, step_hz)
+    assert abs(-phase - 60) < 2 and abs(hs.fixation_point_m(gain) - 1.2) < 0.03, (phase, gain)
+    tl = np.tan(np.radians(late))
+    assert abs(np.cov(y, tl, bias=True)[0, 1] / np.var(tl) - 0.6) < 0.01
+
+
+def test_head_kinematics_coupling_reads_yaw_and_roll_against_the_sway():
+    """Yaw turning back to the midline 10 % of a stride after the head is furthest out, and
+    roll tilting to the left 15 % before it gets there, are read as such."""
+    import head_kinematics as hk
+    amp = {"lateral": {"amp_1cps": 20.0, "peak_1cps_pct": 25.0},
+           "yaw": {"amp_1cps": float(np.degrees(np.arctan(0.02))), "peak_1cps_pct": 85.0},
+           "roll": {"amp_1cps": 1.0, "peak_1cps_pct": 60.0}}
+    c = hk.coupling(amp)
+    assert abs(c["yaw_lag_pct"] - 10) < 1e-9 and abs(c["roll_lead_pct"] + 15) < 1e-9
+    assert abs(c["yaw_fixation_m"] - 1.0) < 1e-9
+    amp["yaw"]["peak_1cps_pct"] = 2.0                  # wraps across the stride boundary
+    assert abs(hk.coupling(amp)["yaw_lag_pct"] - 27) < 1e-9
+
+
+def test_rig_check_reads_every_segment_of_the_script():
+    """A synthetic performer runs the rig-check script with known signs, including a step
+    forward made of a weight shift, the step and the shift back, and one leg straight to
+    the other: every movement is found, assigned to its segment and signed."""
+    import rig_check as rc
+    fs = rc.GRID_FS
+    sign = {"shift_right": 1, "shift_left": -1, "step_forward": 1, "stand_right_leg": 1,
+            "stand_left_leg": -1, "nod_chin_down": 1, "right_ear_to_shoulder": -1,
+            "left_ear_to_shoulder": 1, "turn_right": 1, "turn_left": -1}
+    amp = {"x": 0.2, "z": 0.2, "pitch": 35.0, "roll": 50.0, "yaw": 60.0}
+    n = int(400 * fs)
+    p = {c: np.zeros(n) for c in ("x", "z", "pitch", "roll", "yaw", "mocap_z")}
+    p["t"] = np.arange(n) / fs
+    t = 5.0                                         # 5 s of getting ready, then still
+    p["x"][: int(3 * fs)] = 0.3
+    t += 15.0
+
+    def hold(c, v, start, dur):
+        a, b = int(start * fs), int((start + dur) * fs)
+        ramp = np.minimum(1, np.minimum(np.arange(b - a), np.arange(b - a)[::-1]) / (0.5 * fs))
+        p[c][a:b] += v * ramp
+        if c == "z":
+            p["mocap_z"][a:b] -= v * ramp
+
+    for name, chan, n_rep, _ in rc.SCRIPT:
+        for k in range(n_rep):
+            if name == "step_forward":
+                hold("x", -0.12 if k == 0 else 0.12, t, 1.6)
+                hold("z", amp["z"], t + 1.3, 3.0)
+                hold("x", -0.12 if k == 0 else 0.12, t + 4.0, 1.6)
+                t += 7.5
+            else:
+                hold(chan, sign[name] * amp[chan], t, 3.0)
+                if chan in ("roll", "yaw"):          # an ear tilt also moves the head
+                    hold("x", 0.06 * sign[name], t, 3.0)
+                t += 3.0 if name == "stand_right_leg" and k == n_rep - 1 else 5.0
+        if name != "stand_right_leg":
+            t += 10.0
+    rows = rc.standing_segments(p)
+    assert [r["segment"] for r in rows] == [s[0] for s in rc.SCRIPT]
+    for r in rows:
+        assert r["channel_moved_every_time"] and r["same_sign_all"], r
+        assert r["sign"] == sign[r["segment"]], r
+    assert all(v < 0 for v in rows[2]["mocap_z_peak_m"])
 
 
 def test_phase_locked_r2_rewards_the_more_accurate_phase():
@@ -2351,7 +2419,7 @@ def test_block_schedule_orders_blocks_and_measures_breaks():
 
 def test_step_table_recovers_steps_feet_and_sway():
     """On a clean synthetic walk every step is one half stride, the feet alternate, the
-    sway sign follows the foot (foot A = positive sway) and the bob spans the full
+    sway sign follows the foot (code 0 = positive sway) and the bob spans the full
     vertical swing; a missed trough leaves one long step flagged invalid, with no sway."""
     import step_table as stt
     t, vertical, lateral, troughs = _synth_gait()
@@ -2363,14 +2431,35 @@ def test_step_table_recovers_steps_feet_and_sway():
     assert bad["step"].tolist() == [40] and bad["lateral_sway_m"].isna().all()
     ok = df[(df["valid_step"] == 1) & df["step"].between(3, len(df) - 3)]
     assert np.allclose(ok["duration_s"], 1 / (2 * 0.9), atol=0.02)
-    assert set(df["stance_foot"]) == {"foot A", "foot B"}
-    sign = np.sign(ok["lateral_sway_m"]).map({1.0: "foot A", -1.0: "foot B"})
+    pos, neg = gait_mod.foot_name(0), gait_mod.foot_name(1)    # right/left on this rig
+    assert set(df["stance_foot"]) == {pos, neg}
+    sign = np.sign(ok["lateral_sway_m"]).map({1.0: pos, -1.0: neg})
     assert (sign == ok["stance_foot"]).mean() > 0.95
     assert np.allclose(ok["vertical_range_m"], 2.0, atol=0.05)
     assert df["stride"].diff().dropna().isin([0, 1]).all()
     untrusted = stt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"],
                                 lab["step_margin"], trust_feet=False)
     assert untrusted["stance_foot"].isna().all() and untrusted["stride"].isna().all()
+
+
+def test_tables_ignore_gait_output_left_over_for_a_gait_excluded_block():
+    """A block outside the gait scope gets no stride data even when a gait file from an
+    earlier run is still on disk."""
+    import tempfile
+    from types import SimpleNamespace
+    import bids_io
+    import trial_table as tt
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = SimpleNamespace(sub="sub-01", ses="ses-02", label=lambda: "blk")
+        np.savez(Path(tmp) / "blk_gait.npz", t=np.arange(10.0), troughs=np.arange(5.0))
+        old = bids_io.deriv_dir
+        try:
+            bids_io.deriv_dir = lambda *a, **k: Path(tmp)
+            assert tt._gait_arrays(rec, gait_ok=False) == (None, "n/a")
+            g, _ = tt._gait_arrays(rec, gait_ok=True)
+            assert g is not None and g["troughs"].size == 5
+        finally:
+            bids_io.deriv_dir = old
 
 
 def test_trial_and_step_tables_cover_every_block_and_join():
@@ -2410,6 +2499,210 @@ def test_trial_and_step_tables_cover_every_block_and_join():
                     & (j["onset_s"] < j["t_start_s"] + j["duration_s"])).all()
         finally:
             C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
+
+
+# ---------------------------------------------------------------------------
+# The operating point: information per trial, the threshold-scale test, its cost
+# ---------------------------------------------------------------------------
+def test_information_per_trial_peaks_above_threshold_and_vanishes_at_the_ends():
+    """A trial at 75 % is the reference; information about a threshold shift peaks near
+    84 % and falls to zero at chance and at ceiling. Blocks that are too hard lose more
+    than blocks equally too easy."""
+    import calibration_cost as cc
+    import threshold_phase as tph
+    assert abs(float(tph.efficiency(0.75)) - 1.0) < 1e-12
+    pc = np.linspace(0.51, 0.94, 2000)
+    peak = pc[np.argmax(tph.efficiency(pc))]
+    assert 0.82 < peak < 0.86, peak
+    assert tph.efficiency(0.52) < 0.02 and tph.efficiency(0.949) < 0.02
+    assert abs(float(cc.information_retained(0.0)) - 1.0) < 1e-12
+    harder, easier = (float(cc.information_retained(np.log(r))) for r in (1.3, 1 / 1.3))
+    assert harder < 0.6 < 0.95 < easier, (harder, easier)
+
+
+def test_threshold_phase_recovers_a_threshold_modulation_at_any_operating_point():
+    """The same threshold oscillation, in a block run at the calibrated threshold and in
+    one 35 % harder: the accuracy coefficient shrinks with the operating point, the
+    information-weighted coefficient in threshold units does not."""
+    import threshold_phase as tph
+    rng = np.random.default_rng(5)
+    n, theta = 20000, 0.10
+    alpha_cal = 1.0 / tph._u(0.75) ** (1 / tph.BETA)         # 75 % at tilt 1
+    levels = np.array(["THR", "EASY", "HARD"])
+    rel_tilt = {"THR": 1.0, "EASY": 1.25, "HARD": 0.8}
+    thr_units, acc_amp = [], []
+    for ratio in (1.0, 1.35):
+        phase = rng.uniform(0, 100, n)
+        level = rng.choice(levels, n, p=[0.85, 0.10, 0.05])
+        tilt = np.array([rel_tilt[v] for v in level])
+        log_alpha = np.log(ratio * alpha_cal) + theta * np.cos(2 * np.pi * 2 * phase / 100)
+        y = (rng.random(n) < tph.expected_accuracy(tilt, np.exp(log_alpha))).astype(float)
+        p_hat = tph.expected_accuracy(tilt, tph.block_alpha(tilt, y))
+        for values, sink in ((tph.weighted_values(y, level, p_hat), thr_units),
+                             (pa.difficulty_adjust(y, level.astype(object)), acc_amp)):
+            c, b, _, cnt = pa._bin(phase, values, 40, "mean", with_counts=True)
+            ok = np.isfinite(b)
+            coef = pa._spectrum_with_coef(c[ok], b[ok], cnt[ok])[1][pa.IDX_2CPS, 1:]
+            sink.append(np.hypot(*(tph.to_threshold_units(coef, p_hat)
+                                   if sink is thr_units else coef)))
+    assert all(abs(t - theta) < 0.035 for t in thr_units), thr_units
+    assert acc_amp[1] < 0.85 * acc_amp[0], acc_amp          # model: 0.73x at this ratio
+
+
+def test_calibration_cost_runs_on_the_validated_simulator():
+    """The cost simulation's estimator reproduces davidson_power's for the confirmatory
+    values, and both tests' studentised sums have their null expectation of N."""
+    import calibration_cost as cc
+    rng = np.random.default_rng(2)
+    log_r = rng.normal(0.1, 0.25, (200, cc.VISITS))
+    t = cc.dp.simulate_tables(rng, cc.dp.draw_coefficients(rng, (200,)), cc.TRIALS,
+                              cc.visit_mix(log_r))
+    ref = cc.dp.estimate(t)
+    z, s2 = cc.estimate_values(t, *cc.accuracy_values(t))
+    assert np.allclose(z, ref.z) and np.allclose(s2, ref.s2)
+    null = cc.study_stats(rng, 10, 400, lambda r, shape: r.normal(0.1, 0.25, shape), 0.0)
+    assert np.allclose(null.mean(0), 10, atol=0.6), null.mean(0)
+
+
+# ---------------------------------------------------------------------------
+# Head roll, response direction, press timing, shared-phase power
+# ---------------------------------------------------------------------------
+def test_roll_effect_recovers_the_equivalent_tilt_and_is_flat_without_it():
+    """A roll that acts as 0.3 deg of tilt per deg is recovered and detected; with no roll
+    effect the estimate stays within its error."""
+    import roll_bias as rb
+    rng = np.random.default_rng(3)
+    n = 1200
+    block = np.repeat(np.arange(4), n // 4)
+    tilt = rng.choice([-1, 1], n) * rng.uniform(0.6, 1.4, n)
+    roll = rng.normal(0, 1.2, n)
+    offset = np.array([-0.2, 0.0, 0.1, 0.3])[block]
+    for g, detect in ((0.3, True), (0.0, False)):
+        y = (rng.random(n) < 1 / (1 + np.exp(-(1.5 * (tilt + g * roll) + offset)))).astype(float)
+        r = rb.roll_effect(y, tilt, roll, block, n_perm=200, rng=np.random.default_rng(1))
+        assert abs(r["equivalent_tilt"] - g) < 3 * r["equivalent_tilt_se"] + 0.02, r
+        assert (r["p"] < 0.05) == detect, r["p"]
+
+
+def test_criterion_contrast_finds_a_stance_foot_lean_the_accuracy_contrast_misses():
+    """A lean towards 'right' on foot 0's steps and 'left' on foot 1's moves the criterion
+    contrast and the towards/away accuracy contrast, not the plain accuracy contrast."""
+    rng = np.random.default_rng(4)
+    n_str = 700
+    stride = np.repeat(np.arange(n_str), 2)
+    foot = np.tile([0, 1], n_str)
+    is_right = rng.random(stride.size) < 0.5
+    lean = np.where(foot == 0, 0.5, -0.5)
+    p_right = 1 / (1 + np.exp(-(1.2 * np.where(is_right, 1, -1) + lean)))
+    said = (rng.random(stride.size) < p_right).astype(float)
+    acc = (said == is_right).astype(float)
+    crit = sfoot.criterion_contrast(is_right, said, foot, stride, n_perm=500,
+                                    rng=np.random.default_rng(0))
+    assert crit["p"] < 0.01 and crit["delta"] < 0, crit["p"]
+    towards = sfoot.towards_label(foot, is_right)
+    tw = sfoot.stance_contrast(acc, towards, stride, n_perm=500, rng=np.random.default_rng(0))
+    assert tw["p"] < 0.01, tw["p"]
+    plain = sfoot.stance_contrast(acc, foot, stride, n_perm=500, rng=np.random.default_rng(0))
+    assert abs(plain["z"]) < 3, plain["z"]
+
+
+def test_press_phase_null_holds_and_detects_presses_locked_to_the_step():
+    """With reaction times unrelated to the stride the presses are not flagged; presses
+    placed at 40 % of each step are flagged at 2 cps."""
+    import press_phase as pp
+    rng = np.random.default_rng(5)
+    troughs = np.arange(0.0, 600.0, 0.6)
+    gait = (troughs, np.tile([0, 1], troughs.size // 2 + 1)[:troughs.size - 1], None, None)
+    onset = np.sort(rng.uniform(2, 590, 500))
+    rt_free = rng.uniform(0.5, 1.2, onset.size)
+    nxt = troughs[np.searchsorted(troughs, onset + 0.5)]
+    rt_locked = nxt + 0.4 * 0.6 + rng.normal(0, 0.03, onset.size) - onset
+    free = pp.analyse_blocks([{"onset": onset, "rt": rt_free, "gait": gait}], n_perm=300,
+                             rng=np.random.default_rng(0))
+    locked = pp.analyse_blocks([{"onset": onset, "rt": rt_locked, "gait": gait}], n_perm=300,
+                               rng=np.random.default_rng(0))
+    assert free["2cps"]["p_holm"] > 0.05, free["2cps"]["p_holm"]
+    assert locked["2cps"]["p_holm"] < 0.01, locked["2cps"]["p_holm"]
+    assert abs(locked["2cps"]["peak_pct_stride"] - 20.0) < 3.0, locked["2cps"]["peak_pct_stride"]
+
+
+def test_press_accuracy_null_holds_with_slower_errors_and_detects_a_press_locked_effect():
+    """Errors that are merely slower are not flagged at the press; accuracy that oscillates
+    with the press phase is, and the onset locking sees it attenuated."""
+    import press_accuracy as pacc
+    import press_phase as pp
+    rng = np.random.default_rng(8)
+    troughs = np.arange(0.0, 900.0, 0.6)
+    gait = (troughs, np.tile([0, 1], troughs.size // 2 + 1)[:troughs.size - 1], None, None)
+    onset = np.sort(rng.uniform(2, 890, 1500))
+    onset_phase = pp.press_phases(onset, np.zeros_like(onset), gait)
+    rt = rng.uniform(0.5, 1.2, onset.size)
+    y_null = (rng.random(onset.size) < 0.75).astype(float)
+    rt_null = rt + 0.2 * (y_null == 0)                       # errors slower, no gait link
+    press = pp.press_phases(onset, rt, gait)
+    y_eff = (rng.random(onset.size) < 0.75 + 0.15 * np.cos(4 * np.pi * press / 100.0)).astype(float)
+    mk = lambda r, y: [{"onset": onset, "rt": r, "y": y, "onset_phase": onset_phase,
+                        "gait": gait, "stride_s": 1.2}]
+    null = pacc.analyse_blocks(mk(rt_null, y_null), "press", n_perm=300,
+                               rng=np.random.default_rng(0))
+    eff = pacc.analyse_blocks(mk(rt, y_eff), "press", n_perm=300, rng=np.random.default_rng(0))
+    eff_on = pacc.analyse_blocks(mk(rt, y_eff), "onset", n_perm=300,
+                                 rng=np.random.default_rng(0))
+    assert null["2cps"]["p_holm"] > 0.05, null["2cps"]["p_holm"]
+    assert eff["2cps"]["p_holm"] < 0.01, eff["2cps"]["p_holm"]
+    assert abs(eff["2cps"]["amplitude"] - 0.15) < 0.05, eff["2cps"]["amplitude"]
+    assert eff_on["2cps"]["amplitude"] < 0.6 * eff["2cps"]["amplitude"]
+
+
+def test_group_curve_fit_matches_lstsq_and_flags_a_shared_step_rate_curve():
+    """The batched R^2 equals a direct least-squares fit, and a clear shared 2 cps group
+    curve is flagged in the 1.5-2.5 cps window with its peak where it was put."""
+    import group_curve as gc
+    rng = np.random.default_rng(9)
+    y = rng.normal(size=gc.N_BINS)
+    f = 3.7
+    w = 2 * np.pi * f / 100.0
+    X = np.column_stack([np.ones(gc.N_BINS), np.cos(w * gc._X), np.sin(w * gc._X)])
+    res = y - X @ np.linalg.lstsq(X, y, rcond=None)[0]
+    r2 = 1 - (res ** 2).sum() / ((y - y.mean()) ** 2).sum()
+    assert abs(gc.r2_spectrum(y)[int(np.argmin(np.abs(gc.FREQS - f)))] - r2) < 1e-9
+    x = np.arange(gc.N_PCT) + 0.5
+    pct = 0.7 + 0.05 * np.cos(4 * np.pi * (x - 10.0) / 100.0) + rng.normal(0, 0.02, gc.N_PCT)
+    v = gc.verdict(pct, np.random.default_rng(0), n_res=300)
+    assert v["window_hit"] and v["sig_2cps"], v
+    assert abs(v["peak_pct_2cps"] - 10.0) < 3.0, v["peak_pct_2cps"]
+
+
+def test_sdt_stride_rate_test_detects_a_criterion_that_flips_once_per_stride():
+    """A criterion swinging once per stride is caught by the separate 1 cps test."""
+    rng = np.random.default_rng(6)
+    n = 2000
+    phase = rng.uniform(0, 100, n)
+    sig = rng.random(n) < 0.5
+    bias = 0.5 * np.cos(2 * np.pi * phase / 100.0)
+    said = rng.random(n) < 1 / (1 + np.exp(-(1.2 * np.where(sig, 1, -1) + bias)))
+    r = sdt.analyse_measure(phase, sig, said, "criterion", nperm=300,
+                            rng=np.random.default_rng(0))
+    assert r["p_1cps"] < 0.01, r["p_1cps"]
+
+
+def test_head_kinematics_harmonic_recovers_amplitude_and_peak():
+    import head_kinematics as hk
+    x = (np.arange(hk.N_BINS) + 0.5) * 100.0 / hk.N_BINS
+    prof = 0.8 * np.cos(2 * np.pi * (x - 30.0) / 100.0) + 0.2 * np.cos(4 * np.pi * x / 100.0)
+    a1, p1 = hk.harmonic(prof, 1.0)
+    a2, _ = hk.harmonic(prof, 2.0)
+    assert abs(a1 - 0.8) < 0.01 and abs(p1 - 30.0) < 0.5 and abs(a2 - 0.2) < 0.01
+
+
+def test_shared_power_holds_its_level_and_rises_with_the_shared_amplitude():
+    import shared_power as shp
+    res = shp.power_curve(np.random.default_rng(7), [800] * 8, amps=np.array([0.0, 0.03]),
+                          nsim=400, nnull=2000)
+    for t in shp.TESTS:
+        assert res[t][0] < 0.09, (t, res[t])
+        assert res[t][1] > res[t][0] + 0.2, (t, res[t])
+    assert res["pooled"][1] >= res["agnostic"][1]
 
 
 # ---------------------------------------------------------------------------

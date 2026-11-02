@@ -310,7 +310,7 @@ def analyse() -> dict | None:
     out_dir = bids_io.deriv_dir("conditions")
     (out_dir / "threshold_by_condition.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8")
-    _figure(per, pooled, pooled_fit, paired, group, bool(slopes),
+    _figure(per, block_trials, pooled_fit, paired, group, bool(slopes),
             bids_io.fig_dir("conditions") / "threshold_by_condition.png")
     _print(report, paired, invariance)
     bids_io.gate_report("threshold", condition=CONDITIONS, n_analysed=len(paired))
@@ -321,35 +321,51 @@ def analyse() -> dict | None:
 # ===========================================================================
 # Figure
 # ===========================================================================
-def _figure(per, pooled, pooled_fit, paired, group, slope_from_cal, out: Path):
+def _figure(per, block_trials, pooled_fit, paired, group, slope_from_cal, out: Path):
     fig, (axA, axB) = plt.subplots(1, 2, figsize=(12, 4.7),
                                    gridspec_kw=dict(width_ratios=[1.4, 1.0]))
 
-    # (a) pooled psychometric fit per condition (illustrative) and binned accuracy
-    xg = np.geomspace(0.3, 25, 200)
-    for c in CONDITIONS:
-        if not pooled[c][0]:
+    # (a) accuracy against tilt in units of each participant's own threshold, with the
+    # psychometric shape the thresholds were fitted with. Raw tilts pooled over people
+    # whose thresholds differ ~4-fold would smear the curve flat and could not be
+    # compared with it.
+    xg = np.geomspace(0.1, 20, 200)
+    edges = np.geomspace(0.25, 8, 11)
+    cen = np.sqrt(edges[:-1] * edges[1:])
+    for k, c in enumerate(CONDITIONS):
+        rel, cor = [], []
+        for s, conds in block_trials.items():
+            f_s = (per.get(s) or {}).get(c)
+            if not (f_s and f_s.get("ok")) or c not in conds:
+                continue
+            for tilt, correct in conds[c]:
+                rel.append(np.asarray(tilt, float) / f_s["thresh75_deg"])
+                cor.append(np.asarray(correct, float))
+        if not rel:
             continue
-        tilt = np.concatenate(pooled[c][0]); cor = np.concatenate(pooled[c][1])
-        # binned accuracy in log-spaced tilt bins
-        edges = np.geomspace(max(0.3, tilt.min()), min(25, tilt.max() + 1e-6), 9)
-        idx = np.clip(np.digitize(tilt, edges) - 1, 0, len(edges) - 2)
-        cen = np.sqrt(edges[:-1] * edges[1:])
-        acc = np.array([cor[idx == b].mean() if np.any(idx == b) else np.nan
-                        for b in range(len(edges) - 1)])
-        axA.scatter(cen, 100 * acc, s=22, color=COND_COL[c], alpha=0.55, zorder=2)
+        rel, cor = np.concatenate(rel), np.concatenate(cor)
+        idx = np.digitize(rel, edges) - 1
+        n = np.array([np.sum(idx == b) for b in range(len(cen))], float)
+        acc = np.array([cor[idx == b].mean() if n[b] else np.nan for b in range(len(cen))])
+        se = np.sqrt(acc * (1 - acc) / np.where(n > 0, n, np.nan))
+        ok = n >= 20
+        axA.errorbar(cen[ok] * (1 + (k - 0.5) * 0.04), 100 * acc[ok], yerr=100 * se[ok],
+                     fmt="o", ms=5, color=COND_COL[c], capsize=0, zorder=3,
+                     label=f"{c}: trials, binned")
         f = pooled_fit.get(c)
         if f:
-            p = cref.weibull(xg, f["alpha_deg"], f["beta"], f["lapse"], GUESS)
-            axA.plot(xg, 100 * p, color=COND_COL[c], lw=2.4, zorder=3,
-                     label=f"{c}: 75% thr = {f['thresh75_deg']:.2f}° (β={f['beta']:.2f})")
-            axA.axvline(f["thresh75_deg"], color=COND_COL[c], ls=":", lw=1.1, zorder=1)
+            a_rel = f["alpha_deg"] / f["thresh75_deg"]   # Weibull scale at threshold 1
+            p = cref.weibull(xg, a_rel, f["beta"], f["lapse"], GUESS)
+            axA.plot(xg, 100 * p, color=COND_COL[c], lw=2.0, zorder=2,
+                     label=f"{c}: model (β = {f['beta']:.2f}, λ = {f['lapse']:.3f})")
     axA.axhline(100 * TARGET, color=S.GREY, ls="--", lw=1.0, zorder=0)
-    axA.set_xscale("log"); axA.set_xlim(0.3, 25); axA.set_ylim(45, 100)
-    axA.set_xticks([0.3, 1, 2, 5, 10, 25]); axA.set_xticklabels(["0.3", "1", "2", "5", "10", "25"])
-    axA.set_xlabel("Gabor tilt (deg)"); axA.set_ylabel("P(correct) (%)")
-    S.panel(axA, "a", "Pooled psychometric fit (illustrative)", fontsize=10)
-    axA.legend(loc="lower right", fontsize=8.5)
+    axA.axvline(1.0, color=S.GREY, ls=":", lw=1.0, zorder=0)
+    axA.set_xscale("log"); axA.set_xlim(0.2, 10); axA.set_ylim(40, 102)
+    axA.set_xticks([0.25, 0.5, 1, 2, 4, 8]); axA.set_xticklabels(["0.25", "0.5", "1", "2", "4", "8"])
+    axA.set_xlabel("tilt / participant's own 75 % threshold")
+    axA.set_ylabel("accuracy (% correct)")
+    S.panel(axA, "a", "Psychometric shape on a common scale", fontsize=10)
+    axA.legend(loc="lower right", fontsize=8)
 
     # (b) paired 75 % thresholds
     for s, st, wk in paired:
@@ -372,11 +388,12 @@ def _figure(per, pooled, pooled_fit, paired, group, slope_from_cal, out: Path):
     src = "slope from calibration refit" if slope_from_cal else "slope fixed (β=2.5, no calibration)"
     fig.suptitle(f"Discrimination threshold: standing vs walking (H5)  —  {src}",
                  fontsize=12, fontweight="semibold", x=0.012, ha="left")
-    S.caption(fig, "Per-condition Weibull fit; the slope/lapse are the per-condition "
-                   "calibration joint-refit estimates (or the QUEST+ design values if no "
-                   "calibration). Pooled curve is illustrative; the paired per-participant "
-                   "thresholds (each fitted to all of that participant's blocks of the "
-                   "condition) are the test. Timeouts excluded.")
+    S.caption(fig, "Each participant's 75 % threshold per condition is a Weibull fit to all "
+                   "their blocks of it (answered trials), with slope β and lapse λ fixed at the "
+                   "calibration refit. a: every trial's tilt divided by that threshold, "
+                   "accuracy ± binomial SE in log bins with ≥ 20 trials; the line is the model "
+                   "the thresholds assume. b: the thresholds, lines pair a participant, bars = "
+                   "medians; p = paired t-test on log thresholds.")
     fig.tight_layout(rect=(0, 0, 1, 0.95)); S.save(fig, out)
 
 

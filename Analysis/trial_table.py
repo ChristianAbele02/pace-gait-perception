@@ -30,7 +30,9 @@ Each row carries:
   names the artefact. The pipeline drops these trials from every trial-based analysis.
 
 Excluded blocks, training trials and trials with an invalid presentation are included
-and flagged, so an analysis filters rather than rebuilds.
+and flagged, so an analysis filters rather than rebuilds. The stride columns are filled
+only for blocks in the gait scope; a block the gait scope excludes (too low a frame rate)
+has n/a there, whatever gait output is left over for it.
 
 Usage::
 
@@ -233,11 +235,16 @@ def block_schedule(recs, bids_dir: Path | None = None) -> dict[str, dict]:
 
 
 def _gait_arrays(rec, gait_ok: bool) -> tuple[dict | None, str]:
-    """The block's gait .npz arrays and foot-label verdict (run gait if the file is missing
-    and the gate lets the block into the gait scope)."""
+    """The block's gait .npz arrays and foot-label verdict (run gait if the file is missing).
+
+    None for a block the gate keeps out of the gait scope: a gait output left over for it
+    from an earlier run is not read, so its trials and steps carry no stride data.
+    """
+    if not gait_ok:
+        return None, "n/a"
     d = bids_io.deriv_dir("gait", rec.sub, rec.ses)
     npz = d / f"{rec.label()}_gait.npz"
-    if not npz.exists() and gait_ok:
+    if not npz.exists():
         gait_mod.gait_recording(rec)
     if not npz.exists():
         return None, "n/a"

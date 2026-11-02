@@ -321,7 +321,7 @@ def _figure(rec, clock, stride, out: Path):
         a.plot(m["freqs_hz"], m["r2"], color=col, lw=2,
                label=f"clock (Hz): max R²={m['best_r2']:.2f}"
                      + (" *" if m["significant"] else ""))
-        a.axhline(m["ci95"], color=col, ls=":", lw=1, label="clock 95% CI")
+        a.axhline(m["ci95"], color=col, ls=":", lw=1, label="clock null 95th pct")
         sref = stride.get(meas)
         if sref:
             a.axhline(sref["best_r2"], color=S.INK, ls="--", lw=1.4,
@@ -332,12 +332,14 @@ def _figure(rec, clock, stride, out: Path):
         a.set_ylim(0, a.get_ylim()[1] * 1.3)      # room for the legend above the CI
         a.legend(loc="upper right", ncol=2, fontsize=7.5)
         S.panel(a, tag, S.MEASURE_LABEL[meas].title())
+    null = ("dotted = 95th percentile of the max-R² permutation null over clock periods; "
+            "* = above it.")
     note = ("Performance folded onto a fixed clock period (Hz); dashed = the best fit "
             "folded onto the stride (cps). A stride-locked oscillation fits the stride "
-            "better than any clock period."
+            "better than any clock period. " + null
             if walking else
             "Standing has no stride, so performance is folded onto clock periods only; "
-            "dotted = 95% permutation CI.")
+            + null)
     S.caption(fig, note, wrap=110)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     S.save(fig, out)

@@ -1,4 +1,4 @@
-"""Exploratory: head stabilisation over the stride (compensatory head pitch).
+"""Exploratory: head stabilisation over the stride (gaze-stabilising head pitch).
 
 During walking the head pitches against its vertical translation to keep the line of sight
 on a point ahead. Pozzo et al. (1990) showed pitch stabilisation in walking, running and
@@ -12,34 +12,37 @@ Per walking block, from the logged 6-DOF head pose:
   head pitch ``p`` (nose down positive; see Pitch axis);
 * step-band coupling: coherence, phase and gain of pitch vs the bob at the step frequency
   (coherence and gain do not depend on the pitch sign);
-* head fixation point ``D* = cov(y, tan p) / var(tan p)`` (m) on the step band, the
-  distance at which pitch cancels the translation for a target straight ahead. The step
-  band is used because the compensatory pitch follows the twice-per-stride bob, while
-  broadband pitch includes slower movements. Positive = compensatory (head looks down when
-  high), negative = anti-compensatory;
+* head fixation point ``D = 1 mm / tan(gain)`` (m) from the step-frequency gain, the ratio
+  of pitch to vertical amplitude (Hirasaki et al., 1999): the distance at which a pitch of
+  that size would cancel the translation for a target straight ahead, if it were in time;
+* pitch lag behind the bob at the step frequency (deg; 0 = in time, 180 =
+  anti-compensatory). A lagging pitch of the right size still leaves an error of about
+  ``2 sin(lag / 2)`` of the translation's;
+* in-phase fixation point ``cov(y, tan p) / var(tan p)`` (m) on the step band: the
+  least-squares distance, which the lag shrinks towards 0 (about ``D cos(lag)``).
+  Positive = compensatory (head looks down when high), negative = anti-compensatory;
+* stream offset: how far the vertical position (``head_local_pos_y``, Unity's transform)
+  lags the mocap client's own position, the stream the quaternion comes from. A latency
+  difference between the two would show up as pitch lag;
 * compensation at the stimulus distance (2 m), step band: ``1 - RMS(e) / RMS(e0)`` with
   ``e0 = atan(y / D)`` the angular error from translation alone and ``e = e0 - p`` the
-  error after pitch. 1 = perfect, 0 = none, < 0 = worse. Also given with mirrored pitch
-  sign until the sign is verified;
+  error after the head's rotation. 1 = perfect, 0 = none, < 0 = worse;
 * stride-phase profiles (50 bins) of translation, pitch, both gaze errors and angular
   speed. Angular speed uses the gait-band rotation, since frame-to-frame differences of
   the raw pose mostly reflect tracking jitter.
 
 Pitch axis. The rigid body is not aligned with the room and Euler angles wrap, so pitch is
 not taken from an Euler angle. Rotation relative to the block's median pose is expressed as
-a room-frame rotation vector. Pitch is the horizontal axis with most power at the step
-frequency (pitch follows the bob twice per stride; roll and yaw once), oriented toward room
-+x, the participant's right when facing +z (see ``config``). Positive rotation about +x
-turns +z down (nose down). This relies on the same room-axis assumption as the stance-foot
-labels (``config.LATERAL_SIGN_VERIFIED``); a mirrored frame swaps compensatory and
-anti-compensatory. The measured step-band pitch lies 125-170 deg from the bob, i.e.
-anti-compensatory, contradicting the literature, so a mirrored rotation is more
-likely. Until verified (``config.HEAD_PITCH_SIGN_VERIFIED``) the sign of fixation point and
-compensation is not interpreted.
+a rotation vector in the frame of the logged Motive quaternion (x right, y up, z backward;
+see ``config``). Pitch is the horizontal axis with most power at the step frequency (pitch
+follows the bob twice per stride; roll and yaw once), oriented toward -x, so positive
+rotation turns the forward direction (-z) down: nose down. The rig check measured that sign
+with a chin-down nod (``rig_check.py``, ``config.HEAD_PITCH_SIGN_VERIFIED``).
 
-Not measured: retinal motion of the Gabor. The patch is head-locked and the render eye only
-follows head motion below 1.8 Hz (``ProjectionPlane.swayGain = 0``), so the step-rate bob
-hardly reaches the image. How much residual motion reaches the stimulus depends on
+Not measured: retinal motion of the Gabor. The patch follows the head's position but not
+its rotation (head roll tilts it on the retina; see ``roll_bias.py``), and the render eye
+only follows head motion below 1.8 Hz (``ProjectionPlane.swayGain = 0``), so the step-rate
+bob hardly reaches the image. How much residual motion reaches the stimulus depends on
 rendering and eye movements (not recorded).
 
 References
@@ -136,15 +139,55 @@ def rotation_on_grid(motion, tg: np.ndarray, valid_grid: np.ndarray) -> dict | N
     near = np.abs(tg - tt[np.clip(np.searchsorted(tt, tg), 0, tt.size - 1)])
     valid = inside & valid_grid & (near < gait_mod.GAP_S)
     rv[~valid] = np.nan
-    return {"rotvec": rv, "valid": valid,
+    frames = np.zeros(len(motion), bool)
+    frames[np.flatnonzero(ok)[keep]] = True
+    return {"rotvec": rv, "valid": valid, "pose_frames": frames,
             "pose_outlier_pct": round(100.0 * (1 - keep.mean()), 2)}
 
 
-def pitch_axis(rv: np.ndarray, fs: float, step_hz: float) -> tuple[np.ndarray, float]:
-    """Horizontal axis (unit, room frame) whose rotation has most power at ``step_hz``.
+def stream_offset(motion, pose_frames: np.ndarray) -> tuple[float, float]:
+    """``(ms, r)``: lag of ``head_local_pos_y`` behind the mocap client's vertical
+    position, from the peak of their cross-correlation in the gait band (parabolic
+    refinement on a 240 Hz grid), and the correlation at that peak. ``pose_frames`` are
+    the mocap rows ``rotation_on_grid`` kept (fresh, valid, not a foreign rigid body)."""
+    if not {"head_mocap_pos_y", "head_local_pos_y"} <= set(motion.columns):
+        return float("nan"), float("nan")
+    t = motion["t"].to_numpy(float)
+    series = []
+    for col, ok in (("head_local_pos_y", np.ones(len(t), bool)),
+                    ("head_mocap_pos_y", pose_frames)):
+        v = motion[col].to_numpy(float)
+        ok = ok & np.isfinite(v)
+        if ok.sum():                       # head height stays within 15 cm on the treadmill
+            ok &= np.abs(v - np.median(v[ok])) < 0.15
+        tt, vv = t[ok], v[ok]
+        uniq = np.concatenate([[True], np.diff(tt) > 0])
+        series.append((tt[uniq], vv[uniq]))
+    if min(s[0].size for s in series) < 1000:
+        return float("nan"), float("nan")
+    fs = 240.0
+    tg = np.arange(max(s[0][0] for s in series), min(s[0][-1] for s in series), 1 / fs)
+    a, b = (gait_mod._bandpass(np.interp(tg, tt, vv), fs, 0.5, gait_mod.LOWPASS_HZ)
+            for tt, vv in series)
+    m = int(0.15 * fs)
+    a, b = a[m:-m], b[m:-m]
+    lags = np.arange(-m, m + 1)
+    cc = np.array([np.corrcoef(a[m + L: a.size - m + L], b[m: b.size - m])[0, 1]
+                   for L in lags])
+    i = int(np.argmax(cc))
+    shift = 0.0
+    if 0 < i < lags.size - 1:
+        den = cc[i - 1] - 2 * cc[i] + cc[i + 1]
+        shift = 0.5 * (cc[i - 1] - cc[i + 1]) / den if den else 0.0
+    return float((lags[i] + shift) / fs * 1000.0), float(cc[i])
 
-    Oriented toward +x. Returns (axis, share of its power within +-15 % of the step
-    frequency).
+
+def pitch_axis(rv: np.ndarray, fs: float, step_hz: float) -> tuple[np.ndarray, float]:
+    """Horizontal axis (unit, mocap frame) whose rotation has most power at ``step_hz``.
+
+    Oriented toward -x, so positive rotation about it is nose down (the mocap frame's z
+    points backward; ``config``, ``rig_check``). Returns (axis, share of its power within
+    +-15 % of the step frequency).
     """
     ok = np.all(np.isfinite(rv), axis=1)
     # The spectrum along u = (cos a, 0, sin a) is cos² P_xx + sin² P_zz + 2 cos sin Re P_xz,
@@ -163,9 +206,12 @@ def pitch_axis(rv: np.ndarray, fs: float, step_hz: float) -> tuple[np.ndarray, f
         share = pxx[near].sum() / max(pxx[band].sum(), 1e-12)
         if share > best_share:
             best, best_share = np.array([c, 0.0, s]), share
-    if best[0] < 0:
-        best = -best
-    return best, float(best_share)
+    return pitch_axis_orientation(best), float(best_share)
+
+
+def pitch_axis_orientation(axis: np.ndarray) -> np.ndarray:
+    """``axis`` pointing towards -x, so that positive rotation about it is nose down."""
+    return -axis if axis[0] > 0 else axis
 
 
 def _bin_by_phase(phase_pct: np.ndarray, x: np.ndarray, nbins: int = N_BINS):
@@ -216,7 +262,8 @@ def block_signals(rec) -> dict | None:
     return {"g": g, "tg": tg, "fs": fs, "y": np.where(rot["valid"], y, np.nan),
             "pitch": pitch, "speed": speed, "phase": phase,
             "axis": axis, "axis_step_share": share, "step_hz": step_hz,
-            "pose_outlier_pct": rot["pose_outlier_pct"]}
+            "pose_outlier_pct": rot["pose_outlier_pct"],
+            "stream_offset": stream_offset(motion, rot["pose_frames"])}
 
 
 def _step_band(x: np.ndarray, fs: float, step_hz: float) -> np.ndarray:
@@ -249,6 +296,12 @@ def _step_coupling(y, p, fs, step_hz) -> tuple[float, float, float]:
             float(np.abs(pyp[i]) / max(pyy[i], 1e-18) / 1000.0))
 
 
+def fixation_point_m(gain_deg_per_mm: float) -> float:
+    """Distance (m) at which a pitch of ``gain`` degrees per mm of vertical translation,
+    in time with it, would hold a target straight ahead."""
+    return float(1e-3 / np.tan(np.radians(gain_deg_per_mm))) if gain_deg_per_mm > 0         else float("nan")
+
+
 def analyse_block(rec) -> dict | None:
     """Head-stabilisation metrics and stride-phase profiles for one walking block.
 
@@ -268,9 +321,8 @@ def analyse_block(rec) -> dict | None:
     hfp = float(np.cov(ys[oks], tp, bias=True)[0, 1] / np.var(tp)) if np.var(tp) > 0 else float("nan")
     e0s = np.degrees(np.arctan(ys[oks] / D))
     comp = 1.0 - np.sqrt(np.mean((e0s - ps[oks]) ** 2)) / np.sqrt(np.mean(e0s ** 2))
-    # same with mirrored pitch sign (config.HEAD_PITCH_SIGN_VERIFIED)
-    comp_m = 1.0 - np.sqrt(np.mean((e0s + ps[oks]) ** 2)) / np.sqrt(np.mean(e0s ** 2))
     coh, phase, gain = _step_coupling(y, p, fs, sh)
+    offset_ms, offset_r = b["stream_offset"]
     r = float(np.corrcoef(y[ok], p[ok])[0, 1])
     e0 = np.degrees(np.arctan(y / D))          # error from translation only
     e = e0 - p                                  # error after head pitch
@@ -289,13 +341,16 @@ def analyse_block(rec) -> dict | None:
         "step_coherence": round(coh, 3),
         "step_phase_deg": round(phase, 1),
         "step_gain_deg_per_mm": round(gain, 4),
+        "pitch_lag_deg": round(-phase, 1),
         "corr_vertical_pitch": round(r, 3),
-        "head_fixation_point_m": round(hfp, 3),
+        "head_fixation_point_m": round(fixation_point_m(gain), 3),
+        "inphase_fixation_point_m": round(hfp, 3),
         "compensation_at_2m": round(float(comp), 3),
-        "compensation_at_2m_if_sign_mirrored": round(float(comp_m), 3),
         "median_angular_speed_dps": round(float(np.nanmedian(b["speed"])), 2),
         "worst_gaze_error_phase_pct": round((worst + 0.5) * 100 / N_BINS, 1),
         "pose_outlier_pct": b["pose_outlier_pct"],
+        "stream_offset_ms": round(offset_ms, 1),
+        "stream_offset_r": round(offset_r, 3),
         "n_samples": int(ok.sum()),
         "_profiles": {k: {"mean": v[0].tolist(), "sd": v[1].tolist(), "n": v[2].tolist()}
                       for k, v in prof.items()},
@@ -320,74 +375,119 @@ def _pool_profiles(blocks: list[dict]) -> dict:
 
 
 def _figure(by_sub: dict[str, list[dict]], out: Path) -> None:
-    """Plot stride-phase profiles per participant: translation, pitch, gaze error, speed."""
+    """Plot stride-phase profiles: each participant thin and grey, the group mean and SD bold."""
     x = (np.arange(N_BINS) + 0.5) * 100 / N_BINS
     subs = sorted(by_sub)
     fig, ax = plt.subplots(2, 2, figsize=(11, 7.6), sharex=True)
     specs = [(ax[0, 0], "y_mm", "vertical head position (mm)", "a", "Vertical translation"),
              (ax[0, 1], "pitch_deg", "head pitch, nose down (°)", "b", "Head pitch"),
-             (ax[1, 0], None, "gaze error at 2 m (°)", "c", "Gaze error, target at 2 m"),
+             (ax[1, 0], "err_deg", "gaze error at 2 m (°)", "c", "Gaze error, target at 2 m"),
              (ax[1, 1], "speed_dps", "head angular speed (°/s)", "d", "Head angular speed")]
-    for i, sub in enumerate(subs):
-        col = S.CYCLE[i % len(S.CYCLE)]
-        prof = _pool_profiles(by_sub[sub])
-        for a, key, _, _, _ in specs:
-            if key is None:
-                m0, _ = prof["err0_deg"]
-                m, sd = prof["err_deg"]
-                a.plot(x, m0, color=col, ls="--", lw=1.2)
-                a.plot(x, m, color=col, lw=2, label=S.nice_label(sub))
-                a.fill_between(x, m - sd, m + sd, color=col, alpha=0.12, lw=0)
-            else:
-                m, sd = prof[key]
-                a.plot(x, m, color=col, lw=2, label=S.nice_label(sub))
-                a.fill_between(x, m - sd, m + sd, color=col, alpha=0.12, lw=0)
-    for a, _, ylab, tag, title in specs:
+    profs = {sub: _pool_profiles(by_sub[sub]) for sub in subs}
+
+    def group(a, key, color, ls="-", label="mean ± SD across participants"):
+        m = np.array([profs[s][key][0] for s in subs], float)
+        for row in m:
+            a.plot(x, row, color=S.MIST, lw=0.9, ls=ls, zorder=1)
+        mu, sd = np.nanmean(m, 0), np.nanstd(m, 0, ddof=1) if len(m) > 1 else np.zeros(len(x))
+        a.fill_between(x, mu - sd, mu + sd, color=color, alpha=0.18, lw=0, zorder=2)
+        a.plot(x, mu, color=color, lw=2.4, ls=ls, zorder=3, label=label)
+
+    for a, key, ylab, tag, title in specs:
+        if key == "err_deg":
+            group(a, "err0_deg", S.GREY, ls="--", label="translation only, mean")
+            group(a, key, S.RED, label="with head pitch, mean")
+        else:
+            group(a, key, S.BLUE)
         a.set_ylabel(ylab)
         S.panel(a, tag, title, fontsize=10)
         for xv in (0, 50, 100):
             a.axvline(xv, color=S.GREY, lw=0.8, ls=":")
     for a in ax[1]:
         a.set_xlabel("stride phase (%; 0 and 50 = double support)")
-    ax[1, 0].plot([], [], color=S.GREY, ls="--", label="translation only")
-    ax[1, 0].plot([], [], color=S.GREY, lw=2, label="with head pitch")
-    ax[0, 0].legend(frameon=False, fontsize=8)
-    ax[1, 0].legend(frameon=False, fontsize=8)
-    fig.suptitle("Head stabilisation over the stride (exploratory)", fontsize=13,
-                 fontweight="semibold", x=0.012, ha="left")
-    S.caption(fig, "Mean ± SD over strides, all walking blocks of a participant. Panel c: "
-                   "angular error of a target 2 m ahead from vertical translation alone "
-                   "(dashed) and after the head's pitch (solid); closer to 0 = better "
-                   "gaze stabilisation. Pitch sign assumes the room axes (see module).")
+    ax[0, 0].plot([], [], color=S.MIST, lw=0.9, label="one participant")
+    for a in (ax[0, 0], ax[1, 0]):
+        lo, hi = a.get_ylim()
+        a.set_ylim(lo, hi + 0.3 * (hi - lo))          # headroom: the legend sits above
+        a.legend(loc="upper center", ncol=2, fontsize=8)
+    fig.suptitle(f"Head stabilisation over the stride (exploratory), n = {len(subs)} "
+                 "participants", fontsize=13, fontweight="semibold", x=0.012, ha="left")
+    S.caption(fig, "Grey: each participant's mean profile over the strides of all their "
+                   "walking blocks. Bold: the mean of those profiles ± SD across "
+                   "participants. c: angular error of a target 2 m ahead caused by the "
+                   "head's vertical translation alone (dashed) and after its pitch (solid); "
+                   "closer to 0 = better gaze stabilisation. Positive pitch = nose down "
+                   "(rig check).")
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     S.save(fig, out)
 
 
 def _summary_figure(rows: list[dict], out: Path) -> None:
-    """Plot fixation point, compensation and coupling per walking block."""
+    """Plot fixation point, pitch lag and compensation, one point per walking block."""
     subs = sorted({r["sub"] for r in rows})
     fig, ax = plt.subplots(1, 3, figsize=(11, 3.8))
     for j, (key, lab) in enumerate((("head_fixation_point_m", "head fixation point (m)"),
-                                    ("compensation_at_2m", "compensation at 2 m"),
-                                    ("corr_vertical_pitch", "r (vertical, pitch)"))):
+                                    ("pitch_lag_deg", "pitch lag behind the bob (°)"),
+                                    ("compensation_at_2m", "compensation at 2 m"))):
         for i, sub in enumerate(subs):
             v = [r[key] for r in rows if r["sub"] == sub]
             ax[j].scatter(np.full(len(v), i) + np.linspace(-0.12, 0.12, len(v)), v,
-                          color=S.CYCLE[i % len(S.CYCLE)], s=30, zorder=3)
+                          color=S.BLUE, alpha=0.75, s=24, zorder=3)
         ax[j].axhline(0, color=S.GREY, lw=0.8)
         ax[j].set_xticks(range(len(subs)))
-        ax[j].set_xticklabels([S.nice_label(s) for s in subs])
+        ax[j].set_xticklabels([s.replace("sub-", "") for s in subs])
+        ax[j].set_xlabel("participant")
         ax[j].set_ylabel(lab)
         ax[j].set_xlim(-0.6, len(subs) - 0.4)
+    # Labelled in place, just under each line: a legend box would sit on the line.
     ax[0].axhline(STIM_DISTANCE_M, color=S.RED, lw=0.8, ls="--")
+    ax[0].text(-0.5, STIM_DISTANCE_M, "stimulus distance", color=S.RED, fontsize=8,
+               ha="left", va="top")
+    ax[2].axhline(1.0, color=S.GREEN, lw=0.8, ls="--")
+    ax[2].text(-0.5, 1.0, "perfect", color=S.GREEN, fontsize=8, ha="left", va="top")
     S.panel(ax[0], "a", "Head fixation point", fontsize=10)
-    S.panel(ax[1], "b", "Compensation", fontsize=10)
-    S.panel(ax[2], "c", "Translation–pitch coupling", fontsize=10)
-    S.caption(fig, "One point per walking block. Fixation point > 0 = compensatory pitch "
-                   "(red dashed: the 2 m stimulus distance). Compensation 1 = perfect, "
-                   "0 = none, < 0 = pitch adds to the error.")
+    S.panel(ax[1], "b", "Pitch lag", fontsize=10)
+    S.panel(ax[2], "c", "Compensation", fontsize=10)
+    S.caption(fig, "One point per walking block. a: distance at which a pitch of the "
+                   "observed size, in time with the vertical bob, would keep a point "
+                   "straight ahead steady (step frequency). b: lag of the pitch behind the "
+                   "bob (0 = nose lowest when the head is highest; |lag| > 90 = anti-"
+                   "compensatory). c: share of the translation-induced gaze error at 2 m "
+                   "the pitch removes (1 = all, 0 = none, < 0 = pitch adds to it). "
+                   "Positive pitch = nose down (rig check).")
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     S.save(fig, out)
+
+
+def population_summary(rows: list[dict]) -> dict:
+    """Median and IQR over walking blocks of the per-block metrics. The stream offset is
+    summarised over blocks whose two position streams correlate at r >= 0.95; below that
+    one of them carries tracking errors and its peak is not a latency."""
+    def q(vals):
+        v = np.asarray([x for x in vals if x is not None and np.isfinite(x)], float)
+        if not v.size:
+            return {"median": None, "q25": None, "q75": None, "min": None, "max": None, "n": 0}
+        return {"median": round(float(np.median(v)), 3),
+                "q25": round(float(np.percentile(v, 25)), 3),
+                "q75": round(float(np.percentile(v, 75)), 3),
+                "min": round(float(v.min()), 3), "max": round(float(v.max()), 3),
+                "n": int(v.size)}
+    keys = ("head_fixation_point_m", "pitch_lag_deg", "inphase_fixation_point_m",
+            "compensation_at_2m", "step_coherence", "pitch_step_band_rms_deg",
+            "vertical_rms_mm")
+    clean = [r for r in rows if (r.get("stream_offset_r") or 0) >= 0.95]
+    lag = np.array([r["pitch_lag_deg"] for r in rows], float)
+    return {
+        "note": "EXPLORATORY. Per walking block, step band. Positive pitch = nose down "
+                "(rig check); positive lag = pitch after the bob; positive stream offset "
+                "= head_local_pos_y after the mocap client's position.",
+        "n_blocks": len(rows), "n_participants": len({r["sub"] for r in rows}),
+        "n_compensatory": int(np.sum(np.abs(lag) < 90)),
+        "n_compensation_at_2m_negative": int(sum(r["compensation_at_2m"] < 0 for r in rows)),
+        **{k: q([r[k] for r in rows]) for k in keys},
+        "stream_offset_ms": q([r["stream_offset_ms"] for r in clean]),
+        "n_blocks_stream_offset": len(clean),
+    }
 
 
 def main() -> list[dict]:
@@ -401,10 +501,9 @@ def main() -> list[dict]:
         out = bids_io.deriv_dir("head_stability", rec.sub, rec.ses)
         (out / f"{rec.label()}_head_stability.json").write_text(
             json.dumps(r, indent=2), encoding="utf-8")
-        print(f"  {rec.label()}: step coherence {r['step_coherence']}, phase "
-              f"{r['step_phase_deg']} deg; fixation point {r['head_fixation_point_m']} m; "
-              f"compensation at 2 m {r['compensation_at_2m']} "
-              f"(mirrored sign {r['compensation_at_2m_if_sign_mirrored']}); "
+        print(f"  {rec.label()}: step coherence {r['step_coherence']}, pitch lag "
+              f"{r['pitch_lag_deg']} deg; fixation point {r['head_fixation_point_m']} m; "
+              f"compensation at 2 m {r['compensation_at_2m']}; "
               f"vertical {r['vertical_rms_mm']} mm, step-band pitch "
               f"{r['pitch_step_band_rms_deg']} deg RMS")
     bids_io.gate_report("head_stability", "gait", condition="walking",
@@ -419,6 +518,14 @@ def main() -> list[dict]:
     figs = bids_io.fig_dir("head_stability")
     _figure(by_sub, figs / "head_stability_profiles.png")
     _summary_figure(rows, figs / "head_stability_summary.png")
+    summary = population_summary(rows)
+    (out / "head_stability_summary.json").write_text(json.dumps(summary, indent=2),
+                                                     encoding="utf-8")
+    print(f"  {summary['n_compensatory']} of {summary['n_blocks']} blocks compensatory; "
+          f"fixation point {summary['head_fixation_point_m']['median']} m, pitch lag "
+          f"{summary['pitch_lag_deg']['median']} deg, compensation at 2 m "
+          f"{summary['compensation_at_2m']['median']}; stream offset "
+          f"{summary['stream_offset_ms']['median']} ms")
     print(f"Head stability -> {out}")
     return rows
 

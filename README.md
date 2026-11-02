@@ -476,8 +476,9 @@ a 1.10× threshold ratio. The split also buys robustness to attrition: N = 12 st
 ```
 raw logs → bidsify → BIDS dataset → calibration → presentation rule + exclusion gate → qc / gait
 → phase_analysis (per participant) → group_agnostic (CONFIRMATORY population test)
-→ common_phase / glmm / bayes_glmm / population (secondary)
+→ common_phase / glmm / bayes_glmm / population / threshold_phase (secondary)
 → clocktime_control (stride vs clock control) → conditions / threshold_by_condition
+→ calibration_transfer / calibration_cost / shared_power (operating point and power)
 → exploratory modules → report (HTML summary)
 ```
 
@@ -510,11 +511,37 @@ periods instead of the stride, to rule out an effect locked to time rather than 
 `step_table.py` every walking step (duration, stance foot, sway and bob), joinable on
 `(recording, step)`.
 
-**Further analyses, all exploratory:** stance-foot contrast (`stance_foot.py`; the 2/4 cps
-test is exactly invariant to which foot is down, so foot labels matter only for the odd
-harmonics), sensitivity versus criterion (`sdt_phase.py`), onset versus response locus, a
-cyclic GAM and an EZ-diffusion decomposition, and four analyses of the walking itself (gait
-reset by task events, head stabilisation, stride-to-stride dynamics, stride-phase methods).
+**The operating point.** Each block runs at the threshold its calibration measured.
+`calibration_transfer.py` checks whether the blocks land at the intended 75 %,
+`calibration_cost.py` simulates what the calibration error costs in power, and
+`threshold_phase.py` repeats the stride-phase test on the threshold scale, weighting each
+trial by the information it carries about a threshold shift. `shared_power.py` gives the
+power for an oscillation shared by all participants, the kind a group-average curve shows.
+
+**Further analyses, all exploratory:**
+
+- **Stance foot and response direction** (`stance_foot.py`): the 2/4 cps test is exactly
+  invariant to which foot is down, so foot labels matter only for the odd harmonics and for
+  whether the answer leans towards the stance side.
+- **Sensitivity versus criterion** (`sdt_phase.py`), at 2 and 4 cps and at the stride rate.
+- **Head roll and the response** (`roll_bias.py`): the Gabor follows the head's position but
+  not its rotation, so a roll tilts it on the retina by about the size of near-threshold
+  tilts; the test asks whether that shifts the left/right answer.
+- **When the presses happen** (`press_phase.py`), against RTs shuffled within blocks, and
+  **whether accuracy follows the phase at the press** rather than at onset
+  (`press_accuracy.py`; the trial-level model at the press is `bayes_glmm --lock press`).
+- **The group-average-curve analysis** common in the walking literature (`group_curve.py`),
+  run on the same trials and calibrated on null versions of them, so its verdict and its
+  false-positive rate can be set beside this pipeline's tests.
+- Onset versus response locus, a cyclic GAM and an EZ-diffusion decomposition.
+- **Five analyses of the walking itself:** gait reset by task events, head stabilisation,
+  head kinematics, stride-to-stride dynamics and stride-phase methods. A rig check
+  (`rig_check.py`, run once per rig) measures the sign conventions of left and right and of
+  head roll, pitch and yaw that these and the stance-foot analyses rely on.
+
+`descriptive.py` also writes three figures that introduce a sample: trials kept, calibrated
+thresholds and strides per participant; accuracy, including accuracy against each
+calibration's threshold; and reaction times.
 
 **Missing data and exclusions.** No stage needs a complete set of blocks; truncated logs are
 read up to the break, and tracking gaps get no stride phase. One exclusion gate
