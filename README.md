@@ -425,8 +425,7 @@ the FAIR principles that funders and journals increasingly ask for (Wilkinson et
 - **Interoperable:** one shared vocabulary for files and columns, with units and reference
   frames in the sidecars, so any BIDS tool can read the data.
 - **Reusable:** documented channels, the provenance of the conversion (`GeneratedBy`,
-  `SourceDatasets`) and the untouched raw logs in `sourcedata/`. Before sharing a dataset,
-  add a `License` to `dataset_description.json`.
+  `SourceDatasets`) and the untouched raw logs in `sourcedata/`.
 
 For an open-source release this matters twice. A lab that runs this paradigm
 gets a dataset that others can reuse as it is, and the pipeline reads only the standard
