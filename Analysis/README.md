@@ -943,6 +943,9 @@ prevalence as MAP + HPDI.
 
 ## BIDS notes (verified against BIDS 1.11.1)
 
+- **Layout for users:** `data/README.md`, written by `bidsify.py`, describes the folders,
+  the file names and the visits. Sessions are parts of the protocol (`ses-01` calibration,
+  `ses-02` experiment), not visits; why the dataset uses BIDS at all is in the main README, §6.
 - **Calibration is `_beh.tsv`, not `_events.tsv`** — spec-mandated, because the QUEST+ log
   has no `onset`/`duration` columns.
 - **Motion `_channels.tsv`** uses the required column order `name, component, type,

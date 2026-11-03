@@ -410,6 +410,34 @@ A missed response (2 s window) is logged as a timeout and, in calibration, never
 The analysis treats it the same way: accuracy is the proportion correct of the **answered**
 trials, and whether a trial was answered at all is its own secondary measure, the timeout rate.
 
+**The BIDS dataset.** `Analysis/bidsify.py` turns these logs into a dataset in the Brain
+Imaging Data Structure (BIDS) with its Motion-BIDS extension for motion data (Gorgolewski et
+al., 2016; Jeung et al., 2024). BIDS fixes the folder layout, the file names and the metadata,
+so a dataset can be checked by the BIDS validator and read by other people and tools without
+knowing how a lab names its files. It is now the common format for sharing neuroscience and
+behavioural data openly, used by repositories such as OpenNeuro, and a practical way to meet
+the FAIR principles that funders and journals increasingly ask for (Wilkinson et al., 2016):
+
+- **Findable:** fixed, descriptive file names and machine-readable metadata
+  (`dataset_description.json`), so a repository can index the dataset and a reader can
+  locate any recording.
+- **Accessible:** plain TSV and JSON files that need no proprietary software to open.
+- **Interoperable:** one shared vocabulary for files and columns, with units and reference
+  frames in the sidecars, so any BIDS tool can read the data.
+- **Reusable:** documented channels, the provenance of the conversion (`GeneratedBy`,
+  `SourceDatasets`) and the untouched raw logs in `sourcedata/`. Before sharing a dataset,
+  add a `License` to `dataset_description.json`.
+
+For an open-source release this matters twice. A lab that runs this paradigm
+gets a dataset that others can reuse as it is, and the pipeline reads only the standard
+layout, so it works on any dataset converted this way, the synthetic one from
+`simulate_participants` included.
+
+The converter also writes [data/README.md](data/README.md), which explains the layout. In
+short: `ses-01` holds the calibrations and `ses-02` the experiment blocks, each from both
+visits, so the two sessions are parts of the protocol, not visits. The `run-` number tells
+the blocks apart, and `sub-XX_scans.tsv` records each file's visit.
+
 ---
 
 ## 7. Design and power
@@ -611,6 +639,9 @@ heart-rate deceleration for ECG work. It would need a cue-onset log event, a pat
 - [**May & Solomon (2013).** Four theorems on the psychometric function. *PLOS ONE* 8(9):e74815.](https://doi.org/10.1371/journal.pone.0074815)
 - [**Serrano-Pedraza et al. (2020).** Efficient estimation of stereo thresholds: what slope should be assumed for the psychometric function? *PLOS ONE* 15(1):e0226822.](https://doi.org/10.1371/journal.pone.0226822)
 - [**Paire, Hillairet de Boisferon & Paeye (2022).** Empirical validation of QUEST+ in PSE and JND estimations in visual discrimination tasks. *Behavior Research Methods*.](https://doi.org/10.3758/s13428-022-02001-4)
+- [**Gorgolewski et al. (2016).** The brain imaging data structure, a format for organizing and describing outputs of neuroimaging experiments. *Scientific Data* 3:160044.](https://doi.org/10.1038/sdata.2016.44)
+- [**Jeung et al. (2024).** Motion-BIDS: an extension to the brain imaging data structure to organize motion data for reproducible research. *Scientific Data* 11:716.](https://doi.org/10.1038/s41597-024-03559-8)
+- [**Wilkinson et al. (2016).** The FAIR Guiding Principles for scientific data management and stewardship. *Scientific Data* 3:160018.](https://doi.org/10.1038/sdata.2016.18)
 - [**Ince, Kay & Schyns (2022).** Within-participant statistics for cognitive science. *Trends in Cognitive Sciences* 26(8):626–630.](https://doi.org/10.1016/j.tics.2022.05.008)
 - [**Tredinnick, Boettcher, Smith, Solovy & Ponto (2017).** Uni-CAVE: A Unity3D plugin for non-head-mounted VR display systems. *IEEE Virtual Reality*.](https://doi.org/10.1109/VR.2017.7892342)
 - **Hofmann, F. (2023).** *Human Motion Planning and -Adjustment during Obstacle Traversal in Virtual Reality.* PhD thesis, Faculty of Biology, Bielefeld University. — the apparatus reference (ch. 2; latency in App. C).
