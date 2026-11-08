@@ -66,11 +66,11 @@ predecessor paradigm remain in a few places (for example the Unity `productName`
 
 ## Reference data
 
-`Analysis/davidson_power/` derives this study's power analysis from the openly published data of:
+This study's power analysis was derived from the openly published data of:
 
 - **Davidson, M. J., Verstraten, F. A. J. & Alais, D. (2024).** Walking modulates visual
   detection performance according to stride-cycle phase. *Nature Communications* 15:2027.
   [doi:10.1038/s41467-024-45780-4](https://doi.org/10.1038/s41467-024-45780-4)
 
-Their raw `.mat` files are **not** redistributed here; the scripts read them from the authors'
-own OSF deposit. Only derived summary statistics and figures are committed.
+Their raw `.mat` files are **not** redistributed here; they are available from the authors'
+own OSF deposit. The power-analysis code and its outputs are not part of this repository.

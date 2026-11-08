@@ -269,8 +269,8 @@ def _motion_base(sub: str, ses: str, condition: str | None, run: str | None = No
 
 def _old_order_motion_base(sub: str, ses: str, condition: str | None,
                            run: str | None = None) -> str:
-    """Base name used before 2026-09-21 (``acq-`` before ``tracksys-``, rejected by the
-    validator); only used to remove or rename such files."""
+    """Base name in the older entity order (``acq-`` before ``tracksys-``, which the
+    validator rejects); only used to remove or rename such files."""
     acq = C.acq_for(condition)
     acq_tag = f"_acq-{acq}" if acq else ""
     run_tag = f"_{run}" if run else ""
@@ -515,9 +515,8 @@ def _setup_fix(sub: str, visit) -> dict:
 def _counterbalance(df: pd.DataFrame, sub: str) -> dict:
     """Condition order, visit and start time from the raw log.
 
-    Logged by ``ExperimentConductor`` since 2026-08-18. Older recordings (old
-    ``participant % 2`` rule, no crossover) get ``n/a``. Wrongly logged values are replaced
-    from ``config.SETUP_CORRECTIONS``.
+    Logged by ``ExperimentConductor``; logs without these columns get ``n/a``. Wrongly
+    logged values are replaced from ``config.SETUP_CORRECTIONS``.
     """
     def last(col, cast=None, default="n/a"):
         if col not in df.columns:
@@ -639,7 +638,7 @@ def convert_calibration(csv_path: Path, sub: str, ses: str, bids_dir: Path,
     ``acq-`` entity and ``run`` is the visit number.
     """
     df = pd.read_csv(csv_path, sep=";", comment="#")
-    # Visit and condition order on every row since 2026-09-16; passed to scans.tsv.
+    # Visit and condition order are logged on every row; passed to scans.tsv.
     # Calibration logs have no start time.
     cb = _counterbalance(df.rename(columns={"condition_order_first": "condition-order-first"}),
                          sub)
@@ -680,7 +679,7 @@ def convert_calibration(csv_path: Path, sub: str, ses: str, bids_dir: Path,
                                                    "this trial.", "Units": "degree"},
         "post_sd_log": {"Description": "Posterior SD of the threshold after this trial, in "
                                        "log10 units."},
-        # identity columns, logged on every row since 2026-09-16
+        # identity columns, logged on every row
         "participant": {"Description": "Participant number typed on the setup screen."},
         "visit": {"Description": "Which of the participant's two visits (1 or 2)."},
         "counterbalance_slot": {"Description": "Slot in the permuted-block allocation "
@@ -881,7 +880,7 @@ def _write_scans_tsv(bids_dir: Path, sub: str, sessions: list[dict] | None = Non
                                     "time-on-task within a session and for the interval "
                                     "between a participant's two visits. n/a for "
                                     "calibrations, which log no start time, and for "
-                                    "recordings made before 2026-08-18."},
+                                    "logs without the column."},
         "visit": {"Description": "Which of the participant's two visits this file "
                                  "belongs to (1 or 2)."},
         "n_trials": {"Description": "Rows in the file's trial table: every Gabor trial of "

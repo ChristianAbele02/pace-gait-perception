@@ -43,8 +43,8 @@ exchangeable, so this is an exact randomisation. It keeps each trial's within-st
 timing and the trial count, changing only the foot label, so a 2 cps oscillation, slow
 drift or block structure cannot create an effect.
 
-Population level, as in ``population`` (Davidson's phase coherence is only R = 0.33,
-so same-direction tests are weak):
+Population level, as in ``population`` (when the direction differs between
+participants, same-direction tests are weak):
 
   * direction-agnostic (primary): ``S = Σ_i z_i²``, ``z_i = Δ_i / sd(null_i)``. Tests for
     an asymmetry in any direction per participant. Valid even with the sway-sign convention
@@ -160,10 +160,10 @@ The Gabor plane follows the tracked head POSITION but not its rotation (``Camera
 tracks position only), so the grating stays upright in the room. A head roll of r degrees
 therefore rotates the grating on the retina by r, less whatever ocular counter-roll
 compensates; counter-roll covers only a fraction of a dynamic head roll (Collewijn et al.,
-1985). During walking the head rolls by about a degree once per stride
-(``head_motion.py``), which is the size of the tilt thresholds here. Retinal-image
-accounts of stride-phase effects in orientation tasks (Matthis et al., 2022) can usually
-be set aside when the tilts judged are large; at a threshold near 1 degree they cannot.
+1985). Walking rolls the head once per stride (``head_motion.py`` measures it), and near
+threshold the tilts judged are small. Retinal-image accounts of stride-phase effects in
+orientation tasks (Matthis et al., 2022) can usually be set aside when the tilts judged
+are large; for near-threshold tilts the roll has to be tested.
 
 A retinal rotation adds a signed offset to the tilt that is seen. That moves the
 left/right decision boundary (a criterion shift in signal-detection terms) without

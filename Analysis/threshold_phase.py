@@ -38,7 +38,7 @@ This stage asks the same question on the threshold scale, which (a) does not dep
 the operating point each block happened to run at, (b) states the effect as a threshold
 modulation that compares across participants and studies, and (c) shows how much
 information the blocks carried. Weighting cannot restore information a block at chance
-or at ceiling never collected. What that loss costs in power is ``power.py``.
+or at ceiling never collected.
 
 ``P`` is clipped to ``[P_MIN, P_MAX]`` for the weights. Under the fixed lapse a block at
 ceiling would otherwise get weight zero, although a participant with a smaller lapse
@@ -97,7 +97,6 @@ P_MIN, P_MAX = 0.55, 0.92              # range of P used for the weights
 FREQS = ga.FREQS
 ALPHA = 0.05
 SEED = 20261027
-DAVIDSON_EFFECT = Path(__file__).resolve().parent / "davidson_power" / "davidson_effect.json"
 
 
 # ===========================================================================
@@ -335,15 +334,6 @@ def _confirmatory_population() -> dict:
             for k, v in d.get("by_freq", {}).items()}
 
 
-def _davidson_theta_pct() -> float | None:
-    """Davidson's RMS accuracy modulation at 2 cps, as a threshold modulation at 75 %."""
-    try:
-        rms = json.loads(DAVIDSON_EFFECT.read_text(encoding="utf-8"))["summary"]["rms_amp_2cps"]
-    except (OSError, KeyError, ValueError):
-        return None
-    return 100 * float(rms) / float(slope(DESIGN_PC))
-
-
 # ===========================================================================
 # Figure
 # ===========================================================================
@@ -428,9 +418,6 @@ def _figure(blocks: pd.DataFrame, parts: pd.DataFrame, pop: dict, stem: Path) ->
                                                        if fr in pop else "")))
         ax_d.plot(xs[sig] + off, th[sig], "o", ms=4.5, mfc=col, mec=col, mew=1.1, zorder=3)
     ax_d.plot([], [], "o", ms=4.5, mfc=S.INK, mec=S.INK, label="filled: Holm p < 0.05")
-    dav = _davidson_theta_pct()
-    if dav is not None:
-        S.reference_line(ax_d, y=dav, ls=":", label="Davidson RMS")
     ax_d.plot([], [], "_", ms=9, mew=1.4, color=S.MIST, label="null 95th pct")
     ax_d.set_xticks(xs)
     ax_d.set_xticklabels(short)
@@ -477,8 +464,6 @@ def main() -> dict:
         "effective_trials": round(float(parts["effective_trials"].sum()), 1),
         "information_retained": round(float(parts["effective_trials"].sum()
                                             / parts["n_trials"].sum()), 4),
-        "davidson_rms_theta_pct": (round(_davidson_theta_pct(), 3)
-                                   if _davidson_theta_pct() is not None else None),
         "population": {f"{f:.0f}cps": {k: v for k, v in r.items() if not k.startswith("_")}
                        for f, r in pop.items()},
         "confirmatory_accuracy_test": conf,

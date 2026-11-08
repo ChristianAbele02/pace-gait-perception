@@ -7,8 +7,7 @@ there are two visits: each participant fills all four condition x session-half c
 the standing-versus-walking threshold contrast is within-participant and free of
 time-on-task (``Analysis/conditions._crossover_model``).
 
-Styling is shared with ``make_trial_flow`` via ``diagram_kit.FLOW``. Trial budget and power
-are in the ``davidson_power`` figures.
+Styling is shared with ``make_trial_flow`` via ``diagram_kit.FLOW``.
 
 Run::  python Analysis/figures/make_adopted_design.py
 """

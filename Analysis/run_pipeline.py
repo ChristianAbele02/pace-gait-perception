@@ -18,13 +18,13 @@ from pathlib import Path
 try:
     from . import (bayes_glmm, bids_io, bidsify, calibration, clocktime_control, conditions,
                    descriptive, exclusion, gait, gait_dynamics, group_curve, head_motion,
-                   phase_analysis, population, power, press_phase, qc, report, response_bias,
+                   phase_analysis, population, press_phase, qc, report, response_bias,
                    stage_cache, tables, threshold_phase, config as C)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bayes_glmm, bids_io, bidsify, calibration, clocktime_control, conditions
     import descriptive, exclusion, gait, gait_dynamics, group_curve, head_motion
-    import phase_analysis, population, power, press_phase, qc, report, response_bias
+    import phase_analysis, population, press_phase, qc, report, response_bias
     import stage_cache, tables, threshold_phase
     import config as C
 
@@ -50,8 +50,6 @@ PIPELINE = [
      lambda: conditions.main()),
     ("threshold_phase", "Stride phase on the threshold scale (secondary)",
      lambda: threshold_phase.main()),
-    # After the calibration transfer, the phase stages and the common-phase test it reads.
-    ("power", "Power: calibration cost and a shared oscillation", lambda: power.main()),
     ("descriptive", "Descriptive dataset overview", lambda: descriptive.main()),
     # Reads the walking thresholds of the conditions stage for its head-roll figure.
     ("response_bias", "Stance foot, SDT and head roll (exploratory)", lambda: response_bias.main()),

@@ -9,7 +9,7 @@ each measure is tested for oscillation over the stride. Measures:
   * timeouts (secondary), P(no response) over all trials at their onset phase, run for
     participants with at least ``MIN_TIMEOUTS`` timeouts.
 
-Response likelihood was removed (see config, outcome measures).
+Response likelihood is not analysed (see config, outcome measures).
 
   * 40 phase bins per stride (1 stride = 2 steps);
   * first-order Fourier fit ``A·cos(w·x+φ)+c`` at 0.1-10 cycles per stride (cps) in 0.1
@@ -102,8 +102,7 @@ def difficulty_adjust(y: np.ndarray, level: np.ndarray) -> np.ndarray:
     Adding the grand mean back keeps the original units (hit rate, log10 RT).
 
     This only reduces variance: the adjustment depends on (y, level) alone and is applied
-    identically in the permutation null, so the test stays exact. It recovers most of the
-    ~5 points of power the difficulty mix costs (``davidson_power/``).
+    identically in the permutation null, so the test stays exact.
 
     A level with a single trial becomes the grand mean. Disabled by
     ``config.RESIDUALISE_DIFFICULTY = False``.

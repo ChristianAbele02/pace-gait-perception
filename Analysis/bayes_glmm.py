@@ -37,11 +37,9 @@ What it answers, per measure and frequency:
   effect is confounded with calibration transfer per condition (conditions.py)
   and with condition order; reported, not tested.
 
-Priors follow Davidson et al. (2024): the per-participant RMS amplitude of 0.026 in hit
-rate is ~0.14 on the logit scale at 75 % correct, so phase priors are N(0, 0.2) per
-component and HalfNormal(0.2) for tau. Savage-Dickey Bayes factors depend on this scale,
-which is stored in the output. ``--validate`` simulates the design under a null and under
-individual-phase oscillators and reports how often each Bayes factor exceeds 3.
+Priors are scaled to the per-participant modulation reported by Davidson et al. (2024):
+phase coefficients N(0, 0.2) per component on the logit scale and HalfNormal(0.2) for tau.
+Savage-Dickey Bayes factors depend on this scale, which is stored in the output.
 
 Outputs (``derivatives/bayes_glmm/``): ``bayes_glmm.json`` (estimates, Bayes factors,
 sampler diagnostics), ``bayes_glmm_participants.tsv`` and ``figures/bayes_glmm.png|pdf``.
@@ -49,7 +47,6 @@ sampler diagnostics), ``bayes_glmm_participants.tsv`` and ``figures/bayes_glmm.p
 Usage::
 
     python -m Analysis.bayes_glmm
-    python -m Analysis.bayes_glmm --validate      # slow: simulation check of the BFs
 """
 from __future__ import annotations
 
@@ -88,7 +85,6 @@ DEFAULT_STRIDE_S = 1.2       # virtual stride for a standing-only participant
 N_CHAINS, N_WARMUP, N_SAMPLES = 4, 1000, 1000
 SEED = 20261007
 BF_EVIDENCE = 3.0
-DAVIDSON_RMS_HITRATE = 0.026
 PRIORS = {
     "accuracy": {"a": (1.0, 1.5), "sd_a": 1.0, "b": 1.0, "sd_b": 1.0, "d": 1.0,
                  "mu": 0.2, "tau": 0.2},
@@ -396,8 +392,6 @@ def _figure(results: dict, posts: dict, stem: Path) -> None:
                 y -= 1
             labels.append((y + 1.5, f"{name} {f:g} cps"))
             y -= 0.6
-    ax.axvline(DAVIDSON_RMS_HITRATE * 100, color=S.GREY, ls="--", lw=0.9,
-               label="Davidson, acc.")
     ax.set_ylim(y - 2.9, 0.5)                      # room for the legend below the bars
     h, _ = ax.get_legend_handles_labels()
     h = [plt.Line2D([], [], color=S.COND[c], lw=1.6, marker="o", ms=4,
@@ -430,55 +424,6 @@ def _figure(results: dict, posts: dict, stem: Path) -> None:
 
 
 # ===========================================================================
-# Validation by simulation
-# ===========================================================================
-def _simulate(arr: dict, rng, *, tau_logit: float, measure="accuracy") -> dict:
-    """Simulate accuracy on the real design: base logit per participant and condition from
-    the data, plus an individual-phase oscillation of scale ``tau_logit`` when walking."""
-    n_sub = len(arr["subs"])
-    base = np.zeros((n_sub, 2))
-    for i in range(n_sub):
-        for w in (0, 1):
-            m = (arr["sub"] == i) & (arr["walk"] == w)
-            p = np.clip(arr["y"][m].mean(), 0.55, 0.95) if m.any() else 0.75
-            base[i, w] = np.log(p / (1 - p))
-    z = rng.normal(0, tau_logit, size=(n_sub, 2))              # 2 cps only
-    eta = base[arr["sub"], arr["walk"].astype(int)] + arr["walk"] * np.sum(
-        z[arr["sub"]] * arr["harm"][:, 0, :], axis=1)
-    sim = dict(arr)
-    sim["y"] = (rng.random(len(eta)) < 1 / (1 + np.exp(-eta))).astype(float)
-    return sim
-
-
-def validate(n_rep: int = 20) -> dict:
-    """Rate of Bayes factors above 3 under a null and under individual phases."""
-    arr = _arrays(gather_trials(), "accuracy")
-    rng = np.random.default_rng(SEED)
-    p = float(np.mean(arr["y"]))
-    tau_dav = DAVIDSON_RMS_HITRATE / (p * (1 - p)) / np.sqrt(2)  # logit, per component
-    out = {}
-    for name, tau in (("null", 0.0), ("idiosyncratic_davidson", tau_dav),
-                      ("idiosyncratic_3x", 3 * tau_dav)):
-        hits = {"common": 0, "individual": 0, "individual_null": 0}
-        for r in range(n_rep):
-            post, _ = fit(_simulate(arr, rng, tau_logit=tau), "accuracy", chains=2,
-                          warmup=500, samples=500, seed=SEED + r)
-            s = summarise(post, "accuracy", arr)["by_frequency"]["2cps"]["walk"]
-            hits["common"] += s["bf10_common"] > BF_EVIDENCE
-            hits["individual"] += s["bf10_individual"] > BF_EVIDENCE
-            hits["individual_null"] += s["bf10_individual"] < 1 / BF_EVIDENCE
-        out[name] = {"tau_logit": round(float(tau), 4), "n_rep": n_rep,
-                     **{f"rate_bf10_{k}_gt3": round(v / n_rep, 3)
-                        for k, v in hits.items() if k != "individual_null"},
-                     "rate_bf10_individual_lt_1/3": round(hits["individual_null"] / n_rep, 3)}
-        print(f"  {name}: {out[name]}")
-    path = bids_io.deriv_dir("bayes_glmm") / "bayes_glmm_validation.json"
-    path.write_text(json.dumps(out, indent=2), encoding="utf-8")
-    print(f"  -> {path}")
-    return out
-
-
-# ===========================================================================
 # Main
 # ===========================================================================
 def _describe(results: dict) -> None:
@@ -508,8 +453,6 @@ def _describe(results: dict) -> None:
 def main(argv=None) -> dict | None:
     """Fit both measures, summarise, and write outputs and figure."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--validate", action="store_true", help="simulation check of the BFs")
-    ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--figure-only", action="store_true",
                     help="redraw the figure from the saved results and draws")
     args = ap.parse_args(argv)
@@ -525,9 +468,6 @@ def main(argv=None) -> dict | None:
     if not available():
         print("NumPyro/JAX not installed (pip install 'jax[cpu]' numpyro) - stage skipped.")
         return None
-    if args.validate:
-        return validate(args.reps)
-
     title = "=== Bayesian mixed models: stride phase x condition (SECONDARY) ==="
     df = gather_trials()
     bids_io.gate_report(stem, condition=("standing", "walking"),

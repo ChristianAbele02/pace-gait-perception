@@ -249,9 +249,9 @@ def clean_motion_positions(motion: pd.DataFrame, axes: dict | None = None):
 # Fallback freeze detection: minimum duration of repeated head positions counted as frozen.
 # Positions are logged to 0.1 mm, so single repeats also occur with a still head.
 STALE_MIN_RUN_S = 0.10
-# mocap_frame_advanced is trusted only if at least this share of rows is fresh. Working
-# sessions have 96-99 %, an unrecorded flag ~0 %. A stall long enough to drop below this
-# is still caught by the repeated-pose fallback.
+# mocap_frame_advanced is trusted only if at least this share of rows is fresh. A working
+# flag marks nearly every row fresh, an unrecorded one almost none. A stall long enough to
+# drop below this is still caught by the repeated-pose fallback.
 MIN_FRESH_FLAG_FRAC = 0.5
 HEAD_POS = ("head_local_pos_x", "head_local_pos_y", "head_local_pos_z")
 

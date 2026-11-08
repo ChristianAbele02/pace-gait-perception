@@ -14,7 +14,7 @@ N_TRAIN = 5                    # CheckpointManager.trainingCheckpoints
 N_WARMUP = 5                   # StaircaseManager.warmupTrials
 WARM_HI, WARM_LO = 12, 6       # warmupStartTiltDeg -> warmupEndTiltDeg
 
-# Blocks per condition and visit. The confirmatory test is powered on walking trials; one standing block gives H2 power 0.994 at a 1.10x ratio.
+# Blocks per condition and visit.
 N_STAND, N_WALK = 1, 4
 
 BLOCK_MIN = round(TRIALS_PER_BLOCK * ISI_S / 60)   # 12 min at the mean ISI

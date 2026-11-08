@@ -1,88 +1,26 @@
 # Manuscript figures — captions and supporting tables
 
-Complete, self-contained captions for every ILL manuscript figure, written to be pasted
-into the thesis. Journals typeset the caption as text beneath the figure, so **the
-figures carry no baked-in caption**; the wording lives here.
+Complete, self-contained captions for the methods figures. Journals typeset the caption as
+text beneath the figure, so **the figures carry no baked-in caption**; the wording lives here.
 
-For the same reason the figures carry **no baked-in tables**. The parameter tables that
-used to be rendered into the images are at the bottom of this file, as real tables that
-can be searched, copied and restyled.
+For the same reason the figures carry **no baked-in tables**. The parameter tables are at the
+bottom of this file, as real tables that can be searched, copied and restyled.
 
 Each figure is authored at 183 mm (double-column) and written as a 300 dpi PNG and a
 vector PDF. **Submit the PDF.**
 
 | # | File | One-line message |
 |---|---|---|
-| 1 | `davidson_power/fig1_effect_size` | The effect size is 0.026, not 0.071. |
-| 2 | `davidson_power/fig2_per_participant_power` | Per-participant detection is unreachable. |
-| 3 | `davidson_power/fig3_population_power` | The choice of population test decides the study. |
-| 4 | `davidson_power/fig4_trials_vs_participants` | How trials trade against sample size. |
-| 5 | `figures/adopted_design` | What a participant does, across two visits. |
-| 5b | `figures/design_tradeoff` | Why the walking/standing split is 8/2. |
-| 6 | `davidson_power/fig6_one_vs_two_visits` | Why there are two visits and not one. |
+| 1 | `figures/adopted_design` | What a participant does, across two visits. |
 | S1 | `figures/apparatus` | What the participant is standing in. |
 | S2 | `figures/trial_timeline` | What happens in a trial, and when. |
 | S3 | `figures/trial_flow` | How a session runs, and how the two visits fit together. |
 
 ---
 
-## Figure 1 — Effect size
+## Figure 1 — The adopted design
 
-> **Figure 1. The empirical stride-phase effect size, corrected.**
-> **(A)** Distribution of per-participant oscillation amplitude in Davidson et al.'s
-> (2024) walking data (N = 36), taken as the better of 2 and 4 cps and de-biased against a
-> noise floor bootstrapped through Davidson's own binning, including its double entry of
-> every target. Bars are stacked by whether Davidson's per-participant test flagged the
-> participant. The broken line marks the population root-mean-square amplitude at 2 cps
-> used for power analysis (0.026); the dotted line marks 0.071, the value this project
-> assumed before the effect was re-derived from the raw data.
-> **(B)** The three inflations that produced 0.071, removed in turn: the correct data slice
-> (the combined foot split Davidson actually fit, rather than the RLR-only subset); all 36
-> participants rather than the 8 his test flagged, a flag whose false-positive rate is
-> ≈ 17 % against a nominal 5 %; and the pre-specified 2 cps rather than each participant's
-> better of 2 and 4 cps. The corrected value is a factor of 2.8 below the superseded one.
-
-## Figure 2 — Per-participant power
-
-> **Figure 2. Per-participant detection is out of reach at any feasible trial count.**
-> Detection power of the pipeline's confirmatory per-participant test (40 stride-phase
-> bins, difficulty-residualised accuracy, occupancy-weighted fit, R² at 2 and 4 cps against
-> 1000 trial-level permutations, Holm-corrected pair), against walking trials per
-> participant, at the three amplitudes of Figure 1. Shaded bands are 95 % Monte-Carlo
-> intervals (1000 simulated participants per point). At the population amplitude (0.026)
-> power is 20 % at the adopted 1440 trials and 26 % at 2160. Reaching 80 % needs an
-> amplitude only the selected flagged subset shows.
-
-## Figure 3 — Population power
-
-> **Figure 3. Idiosyncratic phases make the choice of population test decide the study.**
-> **(A)** Davidson's 36 per-participant Fourier coefficients at 2 cps in the (cos, sin)
-> plane. Each participant oscillates at their own phase. The broken circle has the RMS
-> amplitude (0.026); the red arrow is the mean vector, whose length relative to the mean
-> magnitude is the phase coherence R = 0.33.
-> **(B)** Population power against sample size at the adopted 1440 walking trials per
-> participant. "Phase-agnostic" is the confirmatory statistic Σ|zᵢ|²/sᵢ² against its null
-> (`Analysis/population.py`); "common-phase" is the one-sample Hotelling T² on the
-> mean coefficient (`Analysis/population.py`). Both are Holm-corrected over 2 and 4 cps,
-> with 4000 simulated studies per point and 95 % Monte-Carlo bands. Vector-averaging
-> coefficients that point in different directions cancels most of the effect, so at
-> N = 12 the two tests reach 91 % and 15 %. The shaded band is the planned recruitment
-> range.
-
-## Figure 4 — Trials against participants
-
-> **Figure 4. Trials per participant and sample size trade off.**
-> Power (%) of the confirmatory phase-agnostic test over the simulated grid of
-> participants × walking blocks (180 trials per block, 4000 studies per cell). The black
-> staircase separates cells at or above 80 % from those below, drawn along cell edges
-> without interpolation. The orange box is the adopted design: eight blocks from the minimum
-> of 12 analysable participants to the recruitment target of 20, at 91–99 % power. Six
-> blocks clear 80 % from N = 12 and four blocks only
-> from N = 24.
-
-## Figure 5 — The adopted design
-
-> **Figure 5. The adopted collection design: two visits with the condition order crossed
+> **Figure 1. The adopted collection design: two visits with the condition order crossed
 > over.** Session schedule for both arms of the allocation. The condition leading a
 > participant's first visit is read from a pre-generated permuted-block sequence
 > (`ExperimentConductor.ALLOCATION`: blocks of four holding two standing-first and two
@@ -96,25 +34,6 @@ vector PDF. **Submit the PDF.**
 > cells, making the standing-versus-walking threshold contrast a within-participant
 > comparison free of time-on-task rather than one merely balanced across the sample.
 > Each visit yields 720 walking and 180 standing trials, pooling to 1440 and 360.
-
-## Figure 6 — One visit or two
-
-> **Figure 6. Why the design uses two visits.** Population power and minimum detectable
-> effect of the confirmatory phase-agnostic test (`Analysis/population.py`:
-> Σ|zᵢ|²/sᵢ² at 2 and 4 cps, Holm-corrected over the pair). The adopted two-visit design
-> (1440 walking trials per participant, eight blocks over two ~80 min visits) is compared
-> with the single-visit alternative a ~90 min session can hold (810 trials, four to five
-> blocks). Both trial counts are simulated directly.
-> **(A)** Power against sample size at Davidson's measured per-participant amplitude
-> (0.026), with 95 % Monte-Carlo bands. The two-visit design reaches 80 % power at N ≈ 7,
-> the single-visit design at N ≈ 19. What the second visit buys beyond power is the
-> crossover of condition order, which makes the standing-versus-walking threshold
-> contrast within-participant (Figure 5). A single visit cannot provide that at any
-> sample size.
-> **(B)** The smallest oscillation amplitude each design detects with 80 % power, from
-> simulating the whole effect at multiples of the measured amplitude and reading off the
-> 80 % crossing; the dotted line marks the measured value. At N = 20 the two-visit design
-> still detects amplitudes down to 0.020, the single-visit design only to 0.026.
 
 ## Figure S1 — Apparatus
 
@@ -217,7 +136,6 @@ vector PDF. **Submit the PDF.**
 | Calibration lead-in | 5 warm-up trials (12° → 6°) |
 | Recruitment | 20 participants (minimum 12 analysable) |
 | Confirmatory population test | phase-agnostic Σ\|z\|² at 2 and 4 cps |
-| Population power at N = 12 → 20 | 0.92 → 0.99 |
 
 ## Table S4 — Machine topology
 
@@ -227,29 +145,3 @@ vector PDF. **Submit the PDF.**
 | Head node (Linux) | owns tracking, synchronises render nodes, commands the treadmill over Modbus |
 | 3 × render node (Windows) | one per CAVE wall; renders that wall's off-axis view |
 | 3 × CAVE wall | each two stacked 1080p panels as one 1920 × 2160 output |
-
----
-
-## Figure 5b — Design trade-off
-
-> **Figure 5b. Reallocating the trial budget from standing to walking.**
-> **(A)** Power of the confirmatory phase-agnostic population test against walking trials
-> per participant, at three cohort sizes, simulated at the effect size measured from
-> Davidson et al.'s (2024) raw data (4000 simulations per cell, Holm-corrected over 2 and 4
-> cycles per stride). The adopted design moves from six walking blocks to eight, taking
-> power at N = 12 from 0.81 to 0.93 and at N = 15 from 0.87 to 0.96.
-> **(B)** What the standing blocks were buying: the standard deviation of the standing 75 %
-> discrimination threshold, as a percentage of the threshold, against standing trials.
-> Estimated with the fixed-slope Weibull maximum-likelihood fit the pipeline applies
-> (slope 2.5 and lapse 0.05 fixed, the three tilt levels at the 65 / 75 / 85 % points mixed
-> 0.05 / 0.85 / 0.10, true threshold 6.0°, 4000 simulations). Halving the standing budget
-> widens the threshold standard deviation from 4.0 % to 5.7 % of threshold.
->
-> The two arms are not comparable in size. The comparison the standing blocks exist for,
-> the walking-versus-standing threshold contrast, is **within-participant**, so it cancels
-> the between-participant threshold spread and retains only estimation error. At the
-> adopted one standing block per visit its power is already 0.994 for a 1.10× threshold
-> ratio and 1.000 for 1.15× (N = 12). Total session length is unchanged at about
-> 80 minutes per visit. Underlying values are generated by
-> `python -m Analysis.davidson_power.power tradeoff` into
-> `davidson_power/design_tradeoff.json`, which the figure and the READMEs read.

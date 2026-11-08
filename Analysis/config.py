@@ -168,7 +168,7 @@ def run_for(ids: dict) -> str | None:
 # Per-condition calibrations:
 #   p05-b0-t00_calibration_standing.csv.gz, p05-b0-t00_calibration_walking.csv.gz
 # (the older bare ..._calibration.csv is still accepted).
-# Since 2026-09-16 the visit follows the participant:
+# The visit follows the participant:
 #   p05-v2-b1-t05_walking.csv.gz, p05-v2-b0-t02_calibration_standing.csv
 # Older names without it parse with visit None.
 # The condition token and the -N suffix may come in either order.
@@ -262,8 +262,8 @@ HEAD_ROLL_SIGN_VERIFIED = True      # rig_check: right / left ear to the shoulde
 # frequencies (2 and 4 cps) within a measure, not across measures. Each additional
 # confirmatory measure would inflate the family-wise error rate.
 #
-# Accuracy is the single pre-specified primary outcome: the power analysis is based on it
-# (``davidson_power/power.py``), Davidson et al. (2024) report it as the main effect, and
+# Accuracy is the single pre-specified primary outcome: the power analysis is based on it,
+# Davidson et al. (2024) report it as the main effect, and
 # its scale is comparable across participants without normalisation. It is computed over
 # the answered trials: a timeout is a missing response, not a wrong one. Reaction time is
 # secondary, without family-wise error control.
@@ -271,12 +271,12 @@ HEAD_ROLL_SIGN_VERIFIED = True      # rig_check: right / left ear to the shoulde
 # Timeouts are a secondary measure too: P(no response) over all trials at their onset
 # phase, with the same binned fit and trial-level permutation as accuracy.
 #
-# Response likelihood ("response_counts") was removed. In Davidson's detection task a
+# Response likelihood ("response_counts") is not analysed. In Davidson's detection task a
 # response meant a detection, so the count histogram measured sensitivity. Here every trial
 # requires a left/right press, so a response only means no timeout. In addition, the
 # observed histogram binned response phases (onset + RT) while the null sampled onset
 # phases; the response-phase distribution is the onset distribution smoothed by RT spread.
-# The test was therefore overly conservative and degenerate (p = 1) when timeouts were rare.
+# Such a test is overly conservative and degenerate (p = 1) when timeouts are rare.
 # The timeouts measure asks the same question correctly: outcome and null both use onset
 # phases, and it runs only for participants with at least ``phase_analysis.MIN_TIMEOUTS``.
 PRIMARY_MEASURE = "accuracy"
@@ -288,13 +288,13 @@ SECONDARY_MEASURES = ("reaction_time", "timeouts")
 #
 # WEIGHT_BINS_BY_N: weight each phase bin by its trial count in the cosine fit. A bin mean
 #   has variance sigma^2 / n_bin, and bin counts vary because onset coverage is not fully
-#   uniform (the checkpoint jitter is a reflected random walk, residual Rayleigh R ~ 0.07).
+#   uniform (the checkpoint jitter is a reflected random walk).
 #   Set False to reproduce Davidson's unweighted fit.
 WEIGHT_BINS_BY_N = True
 
 # RESIDUALISE_DIFFICULTY: subtract each difficulty level's mean before binning and add the
 #   grand mean back (scale stays hit rate / log10 s). The three tilt levels (mixed
 #   0.85 / 0.10 / 0.05) are independent of stride phase, so their differences are noise in
-#   the binned curve. Removing them recovers the ~5 points of power the mix costs in the
-#   power analysis. Set False to fit raw accuracy / RT.
+#   the binned curve, and removing them reduces that variance. Set False to fit raw
+#   accuracy / RT.
 RESIDUALISE_DIFFICULTY = True

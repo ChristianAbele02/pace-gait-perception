@@ -18,28 +18,18 @@ Phase-agnostic population test, the confirmatory analysis.
 
 Why this test
 -------------
-The pipeline has three population tests of stride-cycle oscillation. At the effect size
-measured in Davidson et al. (2024)'s raw data (``davidson_power/effect.py``) their power
-differs:
+The pipeline has three population tests of stride-cycle oscillation:
 
-============================================  ===========================  ==========
-test                                          what it tests                power*
-============================================  ===========================  ==========
-Hotelling T^2 (common-phase test, below)      a common-phase population     15 %
-                                              mean oscillation
-Bayesian prevalence (below)                   how many individuals clear    ~15 %
-                                              a per-participant test
-this test                                     do individuals oscillate      91 %
-                                              at all, each at its own phase
-============================================  ===========================  ==========
+* the common-phase Hotelling T^2 (below) asks whether the population oscillates at one
+  shared phase, i.e. whether the mean coefficient is non-zero;
+* Bayesian prevalence (below) asks how many individuals pass the per-participant test;
+* this test asks whether individuals oscillate at all, each at their own phase.
 
-\* at the planned N = 12 with 1440 walking trials each (``davidson_power/power.py``).
-
-Davidson's cross-participant phase coherence is only R = 0.33, so preferred phases are
-individual. A common-phase test asks whether the vector mean of the coefficients is
-non-zero, and averaging vectors with different directions cancels most of the signal.
-Prevalence avoids this but depends on the per-participant test's sensitivity, ~0.15 at
-this effect size, which is too low to estimate prevalence.
+In Davidson et al. (2024) the preferred phases differ between participants. Averaging
+coefficients that point in different directions cancels much of the signal, so a
+common-phase test loses sensitivity when phases are individual, and prevalence depends on
+how sensitive the per-participant test is. The phase-agnostic test does not depend on how
+the phases are spread, which is why it is the confirmatory test.
 
 The statistic
 -------------
@@ -50,8 +40,7 @@ permutation null. The statistic is::
     S(f) = sum_i |z_i|^2 / s_i^2
 
 It is rotation-invariant in each ``z_i``: it measures oscillation strength regardless of
-phase. It corresponds to testing the random-slope variance on (cos, sin) in a mixed model,
-and its power is computed in ``power.population_power``.
+phase. It corresponds to testing the random-slope variance on (cos, sin) in a mixed model.
 
 Dividing by ``s_i`` makes the test efficient. Coefficients share a scale but not a
 precision: a participant with fewer trials or accuracy further from ceiling has a wider
@@ -63,7 +52,7 @@ The null is exact. Each participant's trial-level permutations (the 1000 shuffle
 their p-values in ``phase_analysis.analyse_measure``) give permuted coefficients
 ``z_i^(k)``. Participants are independent under the global null, so summing at a common
 shuffle index *k* gives a null draw ``S^(k)``. No assumption about the distribution of
-individual effects is needed (``power.robustness`` shows power is insensitive to it).
+individual effects is needed.
 
 2 and 4 cycles per stride are tested (Davidson's responders peak at one or the other),
 Holm-corrected over the pair as in the per-participant test.
@@ -84,31 +73,19 @@ Common-phase population test (secondary)
 
 Common-phase population test: Hotelling T^2 on the per-participant coefficients.
 
-This test replaces the fixed-effect Wald test of a variational GLMM, which is not valid
-inference; the trial-level model with valid uncertainty is ``bayes_glmm``.
+It is used instead of the fixed-effect Wald test of a variational GLMM, which is not
+valid inference here; the trial-level model with valid uncertainty is ``bayes_glmm``.
 
 Why not the Wald test
 ---------------------
 The GLMM was a hierarchical logistic model fitted by variational inference
 (``BinomialBayesMixedGLM``). Mean-field posteriors understate variance, and here the
 fixed-effect SEs cannot absorb the random-slope variance on the same (cos, sin)
-regressors. False-positive rates under the null (simulated):
+regressors, so the Wald test does not hold its nominal error rate, least of all when the
+preferred phases differ between participants.
 
-=================================  ====================  ==========================
-test                               null, no slope var    null, idiosyncratic phases
-=================================  ====================  ==========================
-GLMM variational Wald              10 %                  60 %
-Hotelling T^2 (this module)        4 %                   9 %
-=================================  ====================  ==========================
-
-The Hotelling 9 % with scattered phases reflects asking a common-phase question of a
-population whose phases differ.
-
-Further advantages:
-
-* exact in small samples (F reference, not asymptotic chi-square), relevant at N = 12-20;
-* it is the statistic of the "coherent" arm in ``davidson_power/power.py``, which gives
-  the 15 % power figure, so pipeline and power analysis match.
+The Hotelling test is also exact in small samples (F reference, not an asymptotic
+chi-square), which matters at the sample sizes of this study.
 
 The statistic
 -------------
@@ -120,16 +97,15 @@ coefficients::
 
 Coefficients are not standardised, unlike in ``population``. Here ``S`` is the
 between-participant covariance and already includes heterogeneity; a noisier participant
-widens ``S``, making the test conservative. This also keeps the statistic identical to the
-power simulation.
+widens ``S``, making the test conservative.
 
 What it is and is not
 ---------------------
 This is the secondary population analysis: does the population oscillate at a common
-phase (non-zero vector mean)? The confirmatory test is ``population``. At Davidson's
-phase coherence of R = 0.33 the vector mean cancels most of the signal (91 % vs 15 % power
-at the planned design). A null result here with a positive one there is expected if
-preferred phases are individual.
+phase (non-zero vector mean)? The confirmatory test is the phase-agnostic test above.
+When preferred phases differ between participants the vector mean cancels much of the
+signal, so a null result here beside a positive phase-agnostic result is what individual
+phases would produce.
 
 Locomotion specificity
 ----------------------
@@ -153,8 +129,9 @@ participants:
   * Fig 4 (c-d): Bayesian population prevalence (Ince, Kay & Schyns 2022) of an
     oscillation at 2 cps, 4 cps and any frequency, MAP with 96 % HPDI. Positives come
     from the primary confirmatory test (2 & 4 cps, Holm; ``phase_analysis``), not the
-    grid scan, and the sensitivity (``power.py``) refers to the same test, so α and
-    sensitivity in the model are consistent.
+    grid scan. The test's sensitivity is set to 1, so the estimate is the prevalence of
+    effects the per-participant test detects, a lower bound on the prevalence of any
+    effect.
   * Fig 5: every participant's fitted 2-cps cosine, the significant ones highlighted, and
     where in the step it peaks (polar: angle = peak position, radius = amplitude), with a
     Rayleigh test over all participants.
@@ -189,16 +166,6 @@ except ImportError:
     import plotstyle as S
 
 S.apply()
-
-
-def _power():
-    """The ``power`` module, imported on first use: it imports this module itself (through
-    ``threshold_phase``), so a module-level import would be circular."""
-    try:
-        from . import power
-    except ImportError:
-        import power
-    return power
 
 
 # ###########################################################################
@@ -294,10 +261,9 @@ def agnostic_test(obs: np.ndarray, null: np.ndarray) -> dict:
         "n_perm": int(null_stat.size),
         "null_mean": float(null_stat.mean()),
         "null_p95": float(np.percentile(null_stat, 95)),
-        # Raw sum, for comparison with davidson_power's raw scale.
+        # Raw (unstudentised) sum, for reference.
         "statistic_unstandardised": float((obs_s ** 2).sum()),
-        # RMS per-participant amplitude on the raw coefficients, in hit-rate units as in
-        # the power analysis (davidson_effect.json: 0.026 at 2 cps).
+        # RMS per-participant amplitude on the raw coefficients, in hit-rate units.
         "rms_amplitude": float(np.sqrt((obs_s ** 2).sum(axis=1).mean())),
         "n_excluded_zero_null": int((~good).sum()),
         "_null_stat": null_stat,
@@ -572,7 +538,6 @@ def _gather_trials(conditions=("walking",)) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True).dropna(subset=["phase", "correct"])
 
 
-
 # ===========================================================================
 # Per-condition coefficients (for the locomotion interaction)
 # ===========================================================================
@@ -826,10 +791,6 @@ PREVALENCE_MEASURES = ["accuracy", "reaction_time"]
 MEASURE_COL = S.MEASURE
 BAND_2 = (1.5, 2.5)
 BAND_4 = (3.5, 4.5)
-# Prevalence is identifiable only if sensitivity is clearly above the false-positive rate.
-# Below this, theta(gamma) is nearly flat and the de-biased MAP drifts toward 1.0, so no
-# de-biased estimate is reported.
-IDENTIFIABLE_MIN_SENS = 0.10
 
 
 # ===========================================================================
@@ -935,17 +896,6 @@ def _corr(x, y):
     return float(r), float(p)
 
 
-def _sensitivity_for(mr) -> float:
-    """Mean per-participant detection power for this measure.
-
-    Based on each participant's trial count and power.REF_AMP. This ``s`` de-biases the
-    prevalence (b1): with s < 1, the same k/n gives a higher prevalence than the
-    sensitivity = 1 lower bound.
-    """
-    ns = [r.get("n_trials", 0) for r in mr]
-    return _power().mean_sensitivity(ns, amp=_power().REF_AMP)
-
-
 def _group(best_freq, sig):
     if not sig:
         return "none"
@@ -995,12 +945,8 @@ def _fig4(rows, out: Path):
         S.panel(a, "ab"[ci], f"{S.MEASURE_LABEL[meas].capitalize()}: spectra (n = {n})",
                 fontsize=10)
 
-        # Bayesian prevalence, DE-BIASED with the measured per-participant sensitivity:
-        # s < 1 lifts the estimate off the naive lower bound. The counts use the PRIMARY
-        # confirmatory test (group_freq + significant), never the exploratory grid peak.
-        s_hat = _sensitivity_for(mr)
-        identifiable = s_hat >= IDENTIFIABLE_MIN_SENS
-        s_eff = max(s_hat, ALPHA + 1e-3)   # keep s above alpha
+        # Bayesian prevalence with test sensitivity 1 (a lower bound). The counts use the
+        # primary confirmatory test (group_freq + significant), never the exploratory grid peak.
         k2 = sum(1 for r in mr if _group(r["group_freq"], r["significant"]) == "2cps")
         k4 = sum(1 for r in mr if _group(r["group_freq"], r["significant"]) == "4cps")
         kany = sum(1 for r in mr if r["significant"])
@@ -1008,7 +954,7 @@ def _fig4(rows, out: Path):
         # Distinct dashes, so curves that coincide (equal k) all stay visible.
         for k, col, ls, lab in [(k2, S.PURPLE, "-", "2 cps"), (k4, S.TEAL, "--", "4 cps"),
                                 (kany, S.INK, ":", "any")]:
-            g, post, mapv, (lo, hi) = bayesian_prevalence(k, n, sensitivity=s_eff)
+            g, post, mapv, (lo, hi) = bayesian_prevalence(k, n)
             a.plot(g, post, color=col, lw=2, ls=ls,
                    label=f"{lab}: k = {k}/{n}, MAP {mapv:.2f} [{lo:.2f}, {hi:.2f}]")
         a.set_xlabel("population prevalence"); a.set_xlim(0, 1)
@@ -1016,21 +962,16 @@ def _fig4(rows, out: Path):
         if ci == 0:
             a.set_ylabel("posterior density")
         a.legend(loc="upper right", fontsize=8)
-        S.panel(a, "cd"[ci], f"{S.MEASURE_LABEL[meas].capitalize()}: prevalence "
-                f"(ŝ = {s_hat:.2f})", fontsize=10)
-        if not identifiable:
-            a.text(0.5, 0.45, "prevalence unidentifiable\n(per-participant power too low:\n"
-                   f"ŝ = {s_hat:.2f}; need more targets/pp)",
-                   transform=a.transAxes, ha="center", va="center", fontsize=8,
-                   color=S.RED, bbox=dict(boxstyle="round", fc="#FBEAEC", ec=S.RED))
+        S.panel(a, "cd"[ci], f"{S.MEASURE_LABEL[meas].capitalize()}: prevalence",
+                fontsize=10)
     fig.suptitle("Stride-phase oscillations per participant and their population prevalence "
                  f"(n = {len({r['sub'] for r in rows})} walking participants)",
                  fontsize=12, fontweight="semibold", x=0.012, ha="left")
     S.caption(fig, "a-b: one line per participant (all walking blocks pooled); colour = "
                    "the confirmatory per-participant test (2 and 4 cps, Holm); dashed guides "
                    "at 2 and 4 cps. c-d: posterior of the proportion of the population that "
-                   "oscillates (Ince et al. 2022), MAP and 96 % HPDI, de-biased with ŝ, the "
-                   "test's power for one participant at the reference amplitude.")
+                   "oscillates (Ince et al. 2022), MAP and 96 % HPDI, with test sensitivity 1 "
+                   "(a lower bound).")
     fig.tight_layout(rect=(0, 0.02, 1, 0.95)); S.save(fig, out)
 
 
@@ -1226,22 +1167,14 @@ def prevalence_main():
     _suppl7(rows, figs / "population_suppl7_stridedur_vs_fits.png")
     _suppl8(rows, figs / "population_suppl8_hz_vs_stridedur.png")
     print(f"Population analysis over {len(subs)} walking participant(s): {subs}")
-    print(f"  (de-biased with measured per-participant sensitivity at amp={_power().REF_AMP}; "
-          f"naive = sensitivity 1.0 = lower bound)")
+    print("  (test sensitivity 1: prevalence of detectable effects, a lower bound)")
     for meas in PREVALENCE_MEASURES:
         mr = [r for r in rows if r["measure"] == meas]
         k2 = sum(1 for r in mr if _group(r["group_freq"], r["significant"]) == "2cps")
-        s_hat = _sensitivity_for(mr)
         med_n = int(np.median([r.get("n_trials", 0) for r in mr])) if mr else 0
-        _, _, map_naive, _ = bayesian_prevalence(k2, len(mr))                       # s = 1 lower bound
-        if s_hat >= IDENTIFIABLE_MIN_SENS:
-            _, _, map_db, (lo, hi) = bayesian_prevalence(k2, len(mr), sensitivity=s_hat)
-            verdict = f"prevalence MAP {map_db:.2f} [{lo:.2f},{hi:.2f}] (naive lower bound {map_naive:.2f})"
-        else:
-            verdict = (f"prevalence UNIDENTIFIABLE (s_hat too low); naive lower bound "
-                       f"{map_naive:.2f}; need more targets/pp")
-        print(f"  {meas:16s}: {k2}/{len(mr)} sig @ ~2 cps | median {med_n} targets/pp, "
-              f"s_hat={s_hat:.2f} | {verdict}")
+        _, _, mapv, (lo, hi) = bayesian_prevalence(k2, len(mr))
+        print(f"  {meas:16s}: {k2}/{len(mr)} sig @ ~2 cps | median {med_n} targets/pp | "
+              f"prevalence MAP {mapv:.2f} [{lo:.2f},{hi:.2f}]")
     if len(subs) < 5:
         print("  (n too small — figures validate the machinery only; pool participants.)")
     print(f"\nFigures -> {out}")

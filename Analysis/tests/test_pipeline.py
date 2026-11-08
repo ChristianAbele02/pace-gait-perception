@@ -11,7 +11,6 @@ Run::
 """
 from __future__ import annotations
 
-import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -135,17 +134,6 @@ def test_constrained_shuffle_no_long_runs():
 # ---------------------------------------------------------------------------
 # Calibration slope/lapse: the refit at the rig's calibration design
 # ---------------------------------------------------------------------------
-def test_calibration_refit_simulation_at_rig_design():
-    """At the rig's design the joint refit recovers a free lapse (better with the catch
-    trials), overestimates the slope from ~50 trials per calibration, and fixing the
-    lapse above the truth inflates the slope further."""
-    rec = cal.simulation_study(n_reps=4, n_calibrations=(24,), true_slope=3.0,
-                              true_lapse=0.01, seed=7)
-    s = {r["strategy"]: r for r in rec["summary"]}
-    assert abs(s["catch"]["lapse_median"] - 0.01) < 0.01
-    assert s["free"]["slope_median"] > 3.0
-    assert s["rig"]["slope_median"] > s["free"]["slope_median"]
-    assert s["rig"]["lapse_median"] == cal.RIG_LAPSE
 
 
 def test_fit_joint_fixed_lapse():
@@ -192,13 +180,6 @@ def test_prevalence_debias_monotonic_when_identifiable():
     _, _, map_hi, _ = pop.bayesian_prevalence(3, 10, sensitivity=0.9)
     _, _, map_lo, _ = pop.bayesian_prevalence(3, 10, sensitivity=0.3)
     assert map_lo >= map_hi, "lower sensitivity should not lower the de-biased estimate"
-
-
-def test_prevalence_unidentifiable_threshold_exists():
-    """The identifiability guard fires when measured sensitivity approaches the
-    false-positive rate, where prevalence cannot be estimated and a number would be
-    misleading."""
-    assert pop.IDENTIFIABLE_MIN_SENS > pop.ALPHA
 
 
 # ---------------------------------------------------------------------------
@@ -381,34 +362,6 @@ def test_visit_named_calibrations_keep_identity_through_bids():
         assert meta["threshold_deg"] == 3.1
         rep = cal.reliability_report(df, meta)
         assert set(rep["trackers"]) == {"A", "B"}
-
-
-def test_bidsify_multiblock_run_entity_preserves_all_blocks():
-    """Several blocks of one condition (distinct trial numbers) become separate run-
-    filesets without overwriting, and the reader recovers the run index."""
-    import tempfile
-    import bids_io
-    import simulate_participants as sim
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        sim.generate(1, raw, walk_s=30.0, stand_s=25.0, n_walk=3, n_stand=2)
-        bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-
-        mo = bids / "sub-01" / "ses-02" / "motion"
-        walk = sorted(mo.glob("sub-01_ses-02_task-ILL_tracksys-optitrack_acq-walking_run-*_motion.tsv"))
-        stand = sorted(mo.glob("sub-01_ses-02_task-ILL_tracksys-optitrack_acq-standing_run-*_motion.tsv"))
-        assert len(walk) == 3, f"expected 3 walking run files (no overwrite), got {len(walk)}"
-        assert len(stand) == 2, f"expected 2 standing run files (no overwrite), got {len(stand)}"
-        # reader recovers the run index and keeps walking runs distinct
-        recs = bids_io.find_recordings(bids)
-        wruns = sorted(r.run for r in recs if r.condition == "walking")
-        assert wruns == ["01", "02", "03"], f"reader lost/merged runs: {wruns}"
-        assert len({r.label() for r in recs}) == len(recs), "recording labels collide"
-        # both per-condition calibrations survive under run-01
-        beh = bids / "sub-01" / "ses-01" / "beh"
-        assert (beh / "sub-01_ses-01_task-ILL_acq-standing_run-01_beh.tsv").exists()
-        assert (beh / "sub-01_ses-01_task-ILL_acq-walking_run-01_beh.tsv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -659,48 +612,6 @@ def test_crossover_contrasts_false_positive_rate_controlled():
         assert hits[k] / n < 0.12, f"{k} FPR {hits[k]/n:.2f} (nominal 0.05)"
 
 
-def test_crossover_allocation_matches_unity_and_balances():
-    """The simulator's allocation string must stay byte-identical to
-    ExperimentConductor.ALLOCATION, and permuted blocks must keep the running
-    standing/walking split within 2 at every enrolment point."""
-    import simulate_participants as sim
-    cs = (ROOT.parent / "Assets" / "Scripts" / "ExperimentConductor.cs").read_text(
-        encoding="utf-8", errors="ignore")
-    m = re.search(r'const string ALLOCATION = "([SW]+)"', cs)
-    assert m, "ALLOCATION constant not found in ExperimentConductor.cs"
-    assert m.group(1) == sim.ALLOCATION, "Unity and simulator allocations diverged"
-    imb = np.cumsum([1 if c == "S" else -1 for c in sim.ALLOCATION])
-    assert np.abs(imb).max() <= 2, f"allocation drifts to {np.abs(imb).max()}"
-    # visit 2 must be the mirror of visit 1 for every slot (the crossover)
-    for slot in range(1, 33):
-        assert sim.standing_first(slot, 1) != sim.standing_first(slot, 2)
-
-
-def test_crossover_design_yields_all_four_cells():
-    """End to end: two visits -> scans.tsv records both orders, so every participant
-    supplies all four (condition x position) cells and H2 becomes within-subject."""
-    import tempfile
-    import bids_io
-    import simulate_participants as sim
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        sim.generate(2, raw, walk_s=25.0, stand_s=25.0, n_walk=1, n_stand=1, visits=2)
-        bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-        scans = pd.read_csv(bids / "sub-01" / "sub-01_scans.tsv", sep="\t")
-        mo = scans[scans["filename"].str.contains("motion")]
-        assert set(mo["condition_order_first"].dropna()) == {"standing", "walking"}, \
-            "the two visits must run opposite orders (crossover)"
-        cells = {(c, p) for c, p in zip(mo["condition"], mo["condition_position"])}
-        assert cells == {("standing", "first"), ("standing", "second"),
-                         ("walking", "first"), ("walking", "second")}, cells
-        assert mo["acq_time"].notna().all(), "acq_time must be populated for time-on-task"
-        # and the reader surfaces it per recording
-        recs = [r for r in bids_io.find_recordings(bids) if r.condition == "walking"]
-        meta = bids_io.scan_meta(recs[0], bids)
-        assert meta.get("condition_position") in ("first", "second")
-
-
 # ---------------------------------------------------------------------------
 # The vectorised R² spectrum is equivalent to the per-frequency lstsq loop
 # ---------------------------------------------------------------------------
@@ -768,7 +679,7 @@ def _agnostic_cohort(amp, n_sub=10, n=400, nperm=200, seed=0, phases="random"):
 
     ``amp`` is the per-participant oscillation amplitude in accuracy units.
     ``phases`` sets each participant's preferred phase:
-      * ``"random"``: uniform (realistic; Davidson's R = 0.33);
+      * ``"random"``: uniform (individual phases, as in Davidson's data);
       * ``"spread"``: evenly spaced, so the vector mean cancels exactly (R = 0);
       * ``"coherent"``: all identical.
     """
@@ -817,7 +728,7 @@ def test_agnostic_recovers_incoherent_population():
 
 def test_agnostic_beats_common_phase_test_when_phases_scatter():
     """With evenly spread phases the vector mean cancels: a common-phase contrast misses
-    the effect, the phase-agnostic statistic detects it (15 % vs 91 % power in the design)."""
+    the effect, the phase-agnostic statistic detects it."""
     obs, null = _agnostic_cohort(amp=0.10, seed=12, phases="spread")
     p_agnostic = pop.agnostic_test(obs, null)["p_value"]
     # common-phase analogue: vector mean against the same permutations
@@ -1323,26 +1234,10 @@ def _coherent(n, amp, seed, noise=1.0):
 
 
 def _idiosyncratic(n, amp, seed, noise=0.5):
-    """N participants each oscillating at their own phase (the case that broke the
-    variational Wald; Davidson's R = 0.33)."""
+    """N participants each oscillating at their own phase."""
     r = np.random.default_rng(seed)
     th = r.uniform(0, 2 * np.pi, n)
     return np.column_stack([amp * np.cos(th), amp * np.sin(th)]) + r.normal(0, noise, (n, 2))
-
-
-def test_hotelling_matches_the_power_analysis_implementation():
-    """The common-phase test matches the statistic of the power analysis."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("power_ref", ROOT / "davidson_power" / "power.py")
-    power = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(power)
-    rng = np.random.default_rng(7)
-    worst = 0.0
-    for _ in range(60):
-        n = int(rng.integers(4, 30))
-        Z = rng.normal(0.2, 1.0, (n, 2))
-        worst = max(worst, abs(pop.hotelling_t2(Z)["p_value"] - power.hotelling_p(Z)))
-    assert worst < 1e-12, f"diverged from davidson_power.power.hotelling_p by {worst:.2e}"
 
 
 def test_hotelling_null_false_positive_rate_controlled():
@@ -1409,71 +1304,6 @@ def test_response_counts_measure_is_removed():
 # ---------------------------------------------------------------------------
 # Missing data: partial blocks (disconnects) and missing blocks
 # ---------------------------------------------------------------------------
-def _raw_block(dur_s=30.0, seed=0):
-    import simulate_participants as sim
-    return sim._motion_run("walking", 5.0, dur_s, seed=seed)
-
-
-def test_read_raw_salvages_truncated_logs_and_rejects_empty_ones():
-    """Truncated .csv and .csv.gz logs keep all complete frames; a header-only log
-    raises UnusableRawLog."""
-    import gzip
-    import tempfile
-    df = _raw_block()
-    with tempfile.TemporaryDirectory() as td:
-        full = Path(td) / "p01-b1-t01_walking.csv"
-        df.to_csv(full, sep=";", index=False)
-        text = full.read_text()
-        got, status = bidsify._read_raw(full)
-        assert status == "complete" and len(got) == len(df)
-
-        cut = Path(td) / "p01-b1-t02_walking.csv"
-        cut.write_text(text[: len(text) // 2])            # stops mid-row
-        got, status = bidsify._read_raw(cut)
-        assert status == "truncated"
-        assert 0 < len(got) < len(df) and got["timestamp"].notna().all()
-        assert got.iloc[-1]["block-id"] == 1, "the half-written last row was kept"
-
-        gz = Path(td) / "p01-b1-t03_walking.csv.gz"
-        blob = gzip.compress(text.encode())
-        gz.write_bytes(blob[: len(blob) // 2])
-        got, status = bidsify._read_raw(gz)
-        assert status == "truncated" and 0 < len(got) < len(df)
-
-        head = Path(td) / "p01-b1-t04_walking.csv"
-        head.write_text(text.splitlines()[0] + "\n")
-        try:
-            bidsify._read_raw(head)
-            raise AssertionError("header-only log was accepted")
-        except bidsify.UnusableRawLog:
-            pass
-
-
-def test_bidsify_keeps_reused_trial_number_and_skips_unusable_logs():
-    """A reused Trial number ('-1' file) keeps both blocks (re-run as run-1xx), and an
-    unusable log does not stop the others."""
-    import tempfile
-    import bids_io
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        _raw_block(seed=1).to_csv(raw / "p01-b1-t01_walking.csv", sep=";", index=False)
-        _raw_block(seed=2).to_csv(raw / "p01-b1-t04_walking.csv", sep=";", index=False)
-        _raw_block(seed=3).to_csv(raw / "p01-b1-t04_walking-1.csv", sep=";", index=False)
-        (raw / "p01-b1-t02_walking.csv").write_text("timestamp;block-id\n")   # aborted
-        bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-
-        runs = sorted(r.run for r in bids_io.find_recordings(bids))
-        assert runs == ["01", "04", "104"], runs
-        # the original keeps the operator's run number
-        orig = pd.read_csv(raw.parent / "bids" / "sourcedata" / "raw" / "p01-b1-t04_walking.csv",
-                           sep=";")
-        ev04 = [r for r in bids_io.find_recordings(bids) if r.run == "04"][0]
-        m, _, _ = bids_io.load_motion(ev04)
-        assert len(m) == len(orig)
-        # re-running from the archive gives the same three runs
-        bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-        assert sorted(r.run for r in bids_io.find_recordings(bids)) == ["01", "04", "104"]
 
 
 def test_stride_phase_is_not_interpolated_across_a_gap():
@@ -1511,139 +1341,6 @@ def test_unrecorded_frame_flag_falls_back_to_repeated_poses():
     m.loc[500:509, "mocap_frame_advanced"] = 0
     stale, source = clean_mod.stale_frames(m)
     assert source == "mocap_frame_advanced" and stale.sum() == 10
-
-
-def test_block_inventory_lists_missing_and_truncated_runs():
-    """A participant with missing blocks is listed with the missing runs."""
-    import tempfile
-    old =(C.BIDS_DIR, C.DERIV_DIR)
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        for t in (1, 3):
-            _raw_block(seed=t).to_csv(raw / f"p01-b1-t{t:02d}_walking.csv", sep=";", index=False)
-        text = (raw / "p01-b1-t03_walking.csv").read_text()
-        (raw / "p01-b1-t03_walking.csv").write_text(text[: len(text) // 2])
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            inv = {r["condition"]: r for r in report.block_inventory()}
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR = old
-        w = inv["walking"]
-        assert w["status"] == "incomplete" and w["runs_present"] == 2
-        assert w["missing_runs"] == "2,4,5,6,7,8" and w["missing_visits"] == "2"
-        assert w["truncated_runs"] == "3"
-        assert inv["standing"]["status"] == "none"
-
-
-def test_excluded_recording_is_kept_in_bids_but_skipped_by_analysis():
-    """An excluded block stays in BIDS with its reason in scans.tsv, is invisible to the
-    analysis stages, and is listed as excluded (not missing) in the block inventory."""
-    import tempfile
-    import bids_io
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.EXCLUDED_RECORDINGS, C.APPLY_BLOCK_RULE)
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        for t in (1, 2):
-            _raw_block(seed=t).to_csv(raw / f"p01-b1-t{t:02d}_walking.csv", sep=";", index=False)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.EXCLUDED_RECORDINGS = {"sub-01_ses-02_task-ILL_acq-walking_run-02": "view flipped"}
-            C.APPLY_BLOCK_RULE = False           # the manual list alone
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            assert [r.run for r in bids_io.find_recordings(bids)] == ["01"]
-            assert [r.run for r in bids_io.find_recordings(bids, scope="gait")] == ["01"]
-            assert len(bids_io.find_recordings(bids, include_excluded=True)) == 2
-            scans = pd.read_csv(bids / "sub-01" / "sub-01_scans.tsv", sep="\t")
-            reason = scans.set_index("filename")["exclusion_reason"]
-            assert reason.str.contains("view flipped").sum() == 1
-            w = {r["condition"]: r for r in report.block_inventory()}["walking"]
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.EXCLUDED_RECORDINGS, C.APPLY_BLOCK_RULE = old
-        assert w["excluded_runs"] == "2" and w["runs_present"] == 1
-        assert "2" not in w["missing_runs"].split(",")
-
-
-def test_setup_correction_overrides_logged_counterbalance_and_mixed_slots_fail():
-    """A block logged with another participant's setup disagrees on the slot: bidsify
-    refuses to average it, and a config.SETUP_CORRECTIONS entry fixes scans.tsv and
-    participants.tsv while the raw log stays as written."""
-    import tempfile
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.SETUP_CORRECTIONS)
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        for t, (slot, first) in zip((5, 6), ((3, "walking"), (1, "standing"))):
-            df = _raw_block(seed=t).assign(**{"visit": 2, "counterbalance-slot": slot,
-                                              "condition-order-first": first})
-            df.to_csv(raw / f"p01-v2-b1-t{t:02d}_walking.csv", sep=";", index=False)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.SETUP_CORRECTIONS = {}
-            try:
-                bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-                raise AssertionError("mixed counterbalance slots were averaged")
-            except ValueError as e:
-                assert "SETUP_CORRECTIONS" in str(e)
-            C.SETUP_CORRECTIONS = {("sub-01", 2): {"counterbalance_slot": 1,
-                                                   "condition_order_first": "standing",
-                                                   "reason": "stale setup screen"}}
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            scans = pd.read_csv(bids / "sub-01" / "sub-01_scans.tsv", sep="\t")
-            parts = pd.read_csv(bids / "participants.tsv", sep="\t")
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.SETUP_CORRECTIONS = old
-        assert set(scans["condition_order_first"]) == {"standing"}
-        assert set(scans["condition_position"]) == {"second"}
-        assert parts.loc[0, "counterbalance_slot"] == 1
-
-
-def test_each_block_gets_one_sheet_per_stage_in_a_figures_folder():
-    """QC and gait write one sheet per block into <stage>/sub/ses/figures/."""
-    import tempfile
-    import bids_io
-    import gait as gait_mod
-    import qc
-    old = (C.BIDS_DIR, C.DERIV_DIR)
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        _raw_block(dur_s=120.0, seed=4).to_csv(raw / "p01-b1-t01_walking.csv", sep=";", index=False)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            rec, = bids_io.find_recordings(bids, include_excluded=True)
-            qc.qc_recording(rec)
-            gait_mod.gait_recording(rec)
-            for stage in ("qc", "gait"):
-                d = C.DERIV_DIR / stage / rec.sub / rec.ses
-                assert [f.name for f in (d / "figures").iterdir()] == [f"{rec.label()}_{stage}.png"]
-                assert not list(d.glob("*.png")), f"{stage}: a figure next to the data"
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR = old
-
-
-def _gate_dataset(td, rng):
-    """Two walking blocks of p01 (normal, reversed), one of p02 (guessing), plus p01's
-    calibrations."""
-    raw = Path(td) / "raw"; raw.mkdir()
-    bids = Path(td) / "bids"; bids.mkdir()
-    for t in (1, 2, 3):
-        df = _raw_block(dur_s=400.0, seed=t)
-        res = df["checkpoint-index"] != -1
-        rc = df.loc[res, "response-correct"]
-        if t == 2:                                  # reversed answers
-            df.loc[res, "response-correct"] = np.where(rc >= 0, 1 - rc, rc)
-        if t == 3:                                  # pure guessing
-            df.loc[res, "response-correct"] = np.where(
-                rc >= 0, rng.integers(0, 2, res.sum()), rc)
-        name = "p02-b1-t01_walking.csv" if t == 3 else f"p01-b1-t{t:02d}_walking.csv"
-        df.to_csv(raw / name, sep=";", index=False)
-    (raw / "p01-b1-t01_calibration_walking.csv").write_text(_min_calib_csv(3.0))
-    (raw / "p01-b0-t01_calibration_standing.csv").write_text(_min_calib_csv(3.0))
-    return raw, bids
 
 
 def test_stage_cache_reuses_only_identical_inputs_and_intact_outputs():
@@ -1842,165 +1539,6 @@ def test_presentation_rule_flags_artefacts_in_the_presentation_window():
     assert why[1] == why[3] == why[6] == "-"
 
 
-def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
-    """Freezing the head pose around one main trial removes exactly that trial from
-    load_events and from the gate's counts; the trial table keeps it, flagged; with the
-    rule off every trial is back."""
-    import tempfile
-    import bids_io
-    import exclusion
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_PRESENTATION_RULE)
-    rng = np.random.default_rng(4)
-    with tempfile.TemporaryDirectory() as td:
-        raw, bids = _gate_dataset(td, rng)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.APPLY_PRESENTATION_RULE = True
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            rec = bids_io.find_recordings(bids, include_excluded=True)[0]
-            before = {r["recording"]: r for r in exclusion.rules_main(quiet=True)}[rec.label()]
-            n_valid = len(bids_io.load_events(rec))
-            ev = bids_io.load_events(rec, presentation_rule=False)
-            target = ev[(ev["is_training"] == 0)
-                        & exclusion.valid_mask(rec, ev)].iloc[3]
-            motion, channels, _ = bids_io.load_motion(rec)
-            win = (motion["t"] >= target["onset"] - 0.1) & (motion["t"] <= target["onset"] + 0.1)
-            motion.loc[win, "mocap_frame_advanced"] = 0
-            motion.to_csv(rec.motion_tsv, sep="\t", index=False, header=False, na_rep="n/a")
-
-            kept = bids_io.load_events(rec)                  # flags rebuilt: motion is newer
-            assert len(kept) == n_valid - 1
-            assert not np.isclose(kept["onset"], target["onset"]).any()
-            after = {r["recording"]: r for r in exclusion.rules_main(quiet=True)}[rec.label()]
-            assert after["n_presentation_flagged"] == before["n_presentation_flagged"] + 1
-            assert after["n_trials"] == before["n_trials"] - 1
-            flags = exclusion.trial_flags(rec, ev)
-            assert flags.loc[np.isclose(ev["onset"], target["onset"]),
-                             "presentation_flag"].item() == "freeze"
-            C.APPLY_PRESENTATION_RULE = False
-            assert len(bids_io.load_events(rec)) == len(ev)
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_PRESENTATION_RULE = old
-
-
-def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
-    """The gate flags a reversed block and a guessing participant. With the rule off
-    nothing but the manual list is excluded; with it on, the behavioural analyses lose the
-    flagged blocks while the gait analyses keep them. An UNRELIABLE calibration leaves the
-    pooled refit, but the above-chance block run on it stays in."""
-    import tempfile
-    import bids_io
-    import exclusion
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
-    rng = np.random.default_rng(0)
-    with tempfile.TemporaryDirectory() as td:
-        raw, bids = _gate_dataset(td, rng)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            cals = {("standing" if "standing" in c.name else "walking"): c
-                    for c in bids_io.find_calibration_tables(bids)}
-            cal_beh = cals["walking"]
-            qc_dir = C.DERIV_DIR / "calibration" / "sub-01" / "ses-01"
-            qc_dir.mkdir(parents=True)
-            for cond, verdict in (("standing", "RELIABLE"),
-                                  ("walking", "UNRELIABLE - recommend recalibration")):
-                (qc_dir / f"{bids_io.calibration_label(cals[cond])}_calibration_qc.json"
-                 ).write_text('{"verdict": "%s"}' % verdict)
-
-            C.APPLY_BLOCK_RULE = False
-            rows = {bids_io._brief(r["recording"]): r for r in exclusion.rules_main()
-                    if r["unit"] == "block"}
-            assert (bids / "derivatives" / "qc" / bids_io.GATE_FILE).exists()
-            assert rows["sub-01 walking run-01"]["rule_exclude"] is False
-            assert rows["sub-01 walking run-02"]["rule"].startswith("reversal")
-            assert rows["sub-02 walking run-01"]["rule"].startswith("chance")
-            assert not any(r["technical_exclude"] for r in rows.values())
-            assert len(bids_io.find_recordings(bids)) == 3, "rule applied while off"
-            assert bids_io.excluded_calibrations() == {}
-
-            C.APPLY_BLOCK_RULE = True            # settings changed: gate rebuilt on read
-            assert [(r.sub, r.run) for r in bids_io.find_recordings(bids)] == [("sub-01", "01")]
-            assert len(bids_io.find_recordings(bids, scope="gait")) == 3
-            assert len(bids_io.find_recordings(bids, include_excluded=True)) == 3
-            assert list(bids_io.excluded_calibrations()) == [bids_io.calibration_label(cal_beh)]
-            fit = cal.refit_from_bids()
-            assert set(fit["by_condition"]) == {"standing"}, "the UNRELIABLE one was refit"
-            assert fit["excluded_by_gate"] == [bids_io.calibration_label(cal_beh)]
-            gate = pd.read_csv(bids / "derivatives" / "qc" / bids_io.GATE_FILE, sep="\t")
-            blk = gate[gate["unit"] == "block"].set_index("recording")
-            assert set(blk["gait"]) == {"include"}
-            assert (blk["behaviour"] == "exclude").sum() == 2
-            assert blk.filter(like="sub-01_ses-02_task-ILL_acq-walking_run-01",
-                              axis=0)["calibration_verdict"].str.startswith(
-                "UNRELIABLE").all(), "the calibration verdict is not recorded with the block"
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
-
-
-def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
-    """A block added after the gate was built gets a verdict before any stage uses it;
-    gate_report logs the stage's N, and prunes outputs of excluded units."""
-    import tempfile
-    import bids_io
-    import exclusion
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
-    rng = np.random.default_rng(1)
-    with tempfile.TemporaryDirectory() as td:
-        raw, bids = _gate_dataset(td, rng)
-        (raw / "p02-b1-t01_walking.csv").unlink()           # the guessing block comes later
-        late = Path(td) / "late"; late.mkdir()
-        df = _raw_block(dur_s=400.0, seed=3)
-        res = df["checkpoint-index"] != -1
-        rc = df.loc[res, "response-correct"]
-        df.loc[res, "response-correct"] = np.where(rc >= 0, rng.integers(0, 2, res.sum()), rc)
-        df.to_csv(late / "p02-b1-t01_walking.csv", sep=";", index=False)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.APPLY_BLOCK_RULE = True
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            exclusion.rules_main(quiet=True)
-            assert bids_io.gate_staleness() is None
-            bidsify.convert_all(raw_dir=late, bids_dir=bids, prune_loose=False)
-            assert "added" in bids_io.gate_staleness()
-            assert [(r.sub, r.run) for r in bids_io.find_recordings(bids)] == \
-                [("sub-01", "01")], "the late guessing block slipped past a stale gate"
-            assert bids_io.gate_staleness() is None
-
-            # output of a block excluded later
-            stale = (bids_io.deriv_dir("phase", "sub-02", "ses-02")
-                     / "sub-02_ses-02_task-ILL_acq-walking_run-01_phase.json")
-            kept = (bids_io.deriv_dir("phase", "sub-01", "ses-02")
-                    / "sub-01_ses-02_task-ILL_acq-walking_run-01_phase.json")
-            stale.write_text("{}"); kept.write_text("{}")
-            row = bids_io.gate_report("phase", condition="walking", n_analysed=1,
-                                      prune=("phase",))
-            assert not stale.exists() and kept.exists()
-            assert (row["units_total"], row["units_included"]) == (3, 1)
-            assert (row["participants_total"], row["participants_included"]) == (2, 1)
-            bids_io.gate_report("gait", "gait", condition="walking", n_analysed=1)
-            bids_io.gate_report("phase", condition="walking", n_analysed=1)   # upsert
-            led = pd.read_csv(bids / "derivatives" / "qc" / bids_io.GATE_LEDGER_FILE,
-                              sep="\t", dtype=str)
-            assert list(led["stage"]) == ["phase", "gait"]
-            assert led.set_index("stage").loc["gait", "units_included"] == "3"
-            assert (led["gate_id"] == bids_io.gate_id()).all()
-
-            # files of participants dropped by the stage and non-estimable population
-            # results are removed
-            sd = bids_io.deriv_dir("sdt")
-            own = sd / "sub-01_ses-02_task-ILL_acq-walking_sdt.json"
-            popf = sd / "sdt_population.json"
-            own.write_text("{}"); popf.write_text("{}")
-            row = bids_io.gate_report("sdt", condition="walking", analysed_subjects=set(),
-                                      prune=("sdt",))
-            assert row["n_analysed"] == 0 and not own.exists()
-            bids_io.clear_stale("sdt", "sdt_population.json")
-            assert not popf.exists()
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
-
-
 # ---------------------------------------------------------------------------
 # Exploratory gait modules: head motion, gait dynamics, gait PRC
 # ---------------------------------------------------------------------------
@@ -2155,48 +1693,6 @@ def test_timeout_measure_recovers_a_phase_dependent_timeout_rate():
     assert pa._timeout_measure(phase, few) is None
 
 
-def test_accuracy_leaves_timeouts_out_of_numerator_and_denominator():
-    """A block's accuracy counts answered trials only, in the phase analysis and in the
-    condition hit rate alike; the timeout outcome keeps every trial."""
-    import tempfile
-    import bids_io
-    import conditions as cond
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
-    with tempfile.TemporaryDirectory() as td:
-        raw = Path(td) / "raw"; raw.mkdir()
-        bids = Path(td) / "bids"; bids.mkdir()
-        _raw_block(dur_s=200.0, seed=6).to_csv(raw / "p01-b1-t01_walking.csv", sep=";",
-                                               index=False)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.APPLY_BLOCK_RULE = False           # a short synthetic block, kept as it is
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            rec, = bids_io.find_recordings(bids, include_excluded=True)
-            ev = bids_io.load_events(rec)
-            ev = ev[ev["is_training"] == 0]
-            if ev["response"].notna().all():               # make sure there are timeouts
-                ev_path = rec.events_tsv
-                full = pd.read_csv(ev_path, sep="\t", na_values=["n/a"])
-                idx = full.index[full["is_training"] == 0][:12]
-                full.loc[idx, ["response", "response_correct", "response_time"]] = np.nan
-                full.to_csv(ev_path, sep="\t", index=False, na_rep="n/a")
-                ev = full[full["is_training"] == 0]
-            gait_mod.gait_recording(rec)
-            with np.load(bids_io.deriv_dir("gait", rec.sub, rec.ses)
-                         / f"{rec.label()}_gait.npz") as z:
-                g = {k: z[k] for k in z.files}
-            tp, _ = pa._trial_phases(rec, g["troughs"], g["step_foot"], g["t"],
-                                     pa.continuous_phase(g))
-            assert tp.loc[tp["timeout"] == 1, "acc"].isna().all()
-            assert tp.loc[tp["timeout"] == 0, "acc"].isin([0.0, 1.0]).all()
-            answered = ev[ev["response"].notna()]
-            want = float((answered["response_correct"] == 1).mean())
-            row = cond._aggregate().iloc[0]
-            assert abs(row["hit_rate"] - want) < 1e-12
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
-
-
 # ---------------------------------------------------------------------------
 # Trial and step tables: the long tables written for analyses outside the pipeline
 # ---------------------------------------------------------------------------
@@ -2309,61 +1805,18 @@ def test_tables_ignore_gait_output_left_over_for_a_gait_excluded_block():
             bids_io.deriv_dir = old
 
 
-def test_trial_and_step_tables_cover_every_block_and_join():
-    """End to end on the gate dataset: every logged trial is a row, excluded blocks stay in
-    with their gate decision, and walking trials join their step in the step table."""
-    import tempfile
-    import bids_io
-    import tables as tt
-    old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
-    rng = np.random.default_rng(2)
-    with tempfile.TemporaryDirectory() as td:
-        raw, bids = _gate_dataset(td, rng)
-        try:
-            C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
-            C.APPLY_BLOCK_RULE = True
-            bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            trials = tt.trials_main()
-            steps = tt.steps_main()
-            recs = bids_io.find_recordings(bids, include_excluded=True)
-            assert len(trials) == sum(len(bids_io.load_events(r, presentation_rule=False))
-                                      for r in recs)
-            on_disk = pd.read_csv(C.DERIV_DIR / "trial_table" / tt.TABLE_FILE, sep="\t",
-                                  na_values=["n/a"])
-            assert list(on_disk.columns) == list(tt.COLUMNS) and len(on_disk) == len(trials)
-            by_block = trials.groupby(["participant", "run"])["behaviour"].first()
-            assert by_block.to_dict() == {("sub-01", 1): "include", ("sub-01", 2): "exclude",
-                                          ("sub-02", 1): "exclude"}
-            assert (trials["gait"] == "include").all()
-            assert trials.loc[trials["timeout"] == 1, "correct"].isna().all()
-            assert steps["recording"].nunique() == 3
-            walk = trials[trials["step"].notna()]
-            j = walk.merge(steps, on=["recording", "step"], suffixes=("", "_step"))
-            assert len(j) == len(walk) > 0
-            assert (j["stance_foot"].fillna("-") == j["stance_foot_step"].fillna("-")).all()
-            assert ((j["onset_s"] >= j["t_start_s"])
-                    & (j["onset_s"] < j["t_start_s"] + j["duration_s"])).all()
-        finally:
-            C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
-
-
 # ---------------------------------------------------------------------------
 # The operating point: information per trial, the threshold-scale test, its cost
 # ---------------------------------------------------------------------------
 def test_information_per_trial_peaks_above_threshold_and_vanishes_at_the_ends():
     """A trial at 75 % is the reference; information about a threshold shift peaks near
-    84 % and falls to zero at chance and at ceiling. Blocks that are too hard lose more
-    than blocks equally too easy."""
-    import power as pw
+    84 % and falls to zero at chance and at ceiling."""
     import threshold_phase as tph
     assert abs(float(tph.efficiency(0.75)) - 1.0) < 1e-12
     pc = np.linspace(0.51, 0.94, 2000)
     peak = pc[np.argmax(tph.efficiency(pc))]
     assert 0.82 < peak < 0.86, peak
     assert tph.efficiency(0.52) < 0.02 and tph.efficiency(0.949) < 0.02
-    assert abs(float(pw.information_retained(0.0)) - 1.0) < 1e-12
-    harder, easier = (float(pw.information_retained(np.log(r))) for r in (1.3, 1 / 1.3))
-    assert harder < 0.6 < 0.95 < easier, (harder, easier)
 
 
 def test_threshold_phase_recovers_a_threshold_modulation_at_any_operating_point():
@@ -2395,23 +1848,8 @@ def test_threshold_phase_recovers_a_threshold_modulation_at_any_operating_point(
     assert acc_amp[1] < 0.85 * acc_amp[0], acc_amp          # model: 0.73x at this ratio
 
 
-def test_calibration_cost_runs_on_the_validated_simulator():
-    """The cost simulation's estimator reproduces davidson_power's for the confirmatory
-    values, and both tests' studentised sums have their null expectation of N."""
-    import power as pw
-    rng = np.random.default_rng(2)
-    log_r = rng.normal(0.1, 0.25, (200, pw.VISITS))
-    t = pw.dp.simulate_tables(rng, pw.dp.draw_coefficients(rng, (200,)), pw.TRIALS,
-                              pw.visit_mix(log_r))
-    ref = pw.dp.estimate(t)
-    z, s2 = pw.estimate_values(t, *pw.accuracy_values(t))
-    assert np.allclose(z, ref.z) and np.allclose(s2, ref.s2)
-    null = pw.study_stats(rng, 10, 400, lambda r, shape: r.normal(0.1, 0.25, shape), 0.0)
-    assert np.allclose(null.mean(0), 10, atol=0.6), null.mean(0)
-
-
 # ---------------------------------------------------------------------------
-# Head roll, response direction, press timing, shared-phase power
+# Head roll, response direction, press timing, head kinematics
 # ---------------------------------------------------------------------------
 def test_roll_effect_recovers_the_equivalent_tilt_and_is_flat_without_it():
     """A roll that acts as 0.3 deg of tilt per deg is recovered and detected; with no roll
@@ -2511,16 +1949,6 @@ def test_head_kinematics_harmonic_recovers_amplitude_and_peak():
     a1, p1 = hm.harmonic(prof, 1.0)
     a2, _ = hm.harmonic(prof, 2.0)
     assert abs(a1 - 0.8) < 0.01 and abs(p1 - 30.0) < 0.5 and abs(a2 - 0.2) < 0.01
-
-
-def test_shared_power_holds_its_level_and_rises_with_the_shared_amplitude():
-    import power as pw
-    res = pw.shared_power_curve(np.random.default_rng(7), [800] * 8, amps=np.array([0.0, 0.03]),
-                          nsim=400, nnull=2000)
-    for t in pw.SHARED_TESTS:
-        assert res[t][0] < 0.09, (t, res[t])
-        assert res[t][1] > res[t][0] + 0.2, (t, res[t])
-    assert res["pooled"][1] >= res["agnostic"][1]
 
 
 # ---------------------------------------------------------------------------

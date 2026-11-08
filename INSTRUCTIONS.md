@@ -62,11 +62,11 @@ Per visit: **1 standing block + 4 walking blocks** (~12 min each), one standing 
 walking calibration, plus baselines and breaks. Across both visits: **2 standing + 8 walking
 blocks** per participant, roughly **1440 walking trials** and 360 standing.
 
-> **Why 4 walking and 1 standing block per visit.** The confirmatory test is powered on
-> walking trials. 1440 of them give power **0.93** at N = 12 and **0.96** at N = 15. The
-> standing-versus-walking threshold comparison is within-participant, which cancels the
-> between-participant spread. **One** standing block per visit therefore already gives power
-> 0.994 (1.10× ratio). See [`Analysis/davidson_power/README.md`](Analysis/davidson_power/README.md).
+> **Why 4 walking and 1 standing block per visit.** The confirmatory test runs on the
+> walking trials, so the session time goes mostly to walking. The standing-versus-walking
+> threshold comparison is within-participant, which cancels the between-participant spread,
+> so **one** standing block per visit suffices. The split was chosen with the power analysis
+> (README §7).
 
 **Watch for walking fatigue.** Four walking blocks mean ~48 min on the treadmill per visit.
 Take the **5 min** break after every second walking block, and do not let a participant skip

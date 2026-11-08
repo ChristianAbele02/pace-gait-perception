@@ -24,10 +24,10 @@ discrimination.
 
 > **What this repository contains, and what it does not.**
 > - ✅ The complete **Unity project** (scenes, scripts, plugins, the assets the scenes use),
->   the **rig scripts** to build, deploy and start it, and the full **analysis pipeline** with
->   its test suite, power analysis and methods figures.
-> - ❌ **No participant data.** The pipeline runs end to end on synthetic participants
->   (`python -m Analysis.simulate_participants`); real data are not published here.
+>   the **rig scripts** to build, deploy and start it, and the **analysis pipeline** with
+>   its test suite and the methods figures.
+> - ❌ **No participant data**, and no results. The repository documents the code and the
+>   methods of the project; it is not a ready-to-run package.
 > - ❌ **No compiled builds**, and no machine names, addresses, user names or keys of the
 >   original installation. The Unity scenes carry **placeholders** (`HEAD-NODE`,
 >   `RENDER-NODE-1…3`, `tracking-pc`, `127.0.0.1`), and the rig scripts read every host and
@@ -41,8 +41,7 @@ discrimination.
 > runs anywhere with Python.
 
 **Where to go:** ▶️ run a session → [INSTRUCTIONS.md](INSTRUCTIONS.md) · 📊 analysis pipeline →
-[Analysis/README.md](Analysis/README.md) · 📈 power analysis →
-[Analysis/davidson_power/README.md](Analysis/davidson_power/README.md)
+[Analysis/README.md](Analysis/README.md)
 
 ### At a glance
 
@@ -159,7 +158,7 @@ PACE/
 │   ├── build.sh  dist.sh  start.sh  gather_logs.sh   head-node side (bash)
 │   ├── deploy.ps1  start.ps1      workstation side (PowerShell)
 │   └── ill.py                     signed start / stop for the render nodes
-├── Analysis/                      Python pipeline, tests, power analysis, figures
+├── Analysis/                      Python pipeline, tests, methods figures
 ├── data/                          BIDS dataset root (only the metadata skeleton is tracked)
 ├── gabor/                         stimulus previews (gabor/gabor_preview.py)
 ├── INSTRUCTIONS.md                operator guide
@@ -230,24 +229,17 @@ minimises the expected posterior entropy.
 **Slope and lapse are fixed, not estimated live.** A short calibration estimates threshold
 robustly but not slope (Paire et al. 2022). Slope and lapse are instead **checked offline**:
 the calibration refit (`python -m Analysis.calibration refit`) fits threshold, slope and lapse by
-maximum likelihood on the pooled calibration trials, and the H5 threshold analysis
-(`Analysis/conditions.py`) tests whether the slope
-differs between standing and walking (likelihood-ratio test) rather than assuming it does not.
-A simulation at the rig's design (`calibration/figures/calibration_refit_simulation.png`;
-thresholds around 1.2°, 34–66 QUEST+ trials, a catch trial at 12° every ~6 trials, true lapse
-1 %, 200 repetitions for 12 and 24 calibrations per condition) shows the limits: with ~50 trials
-per calibration the shared slope comes out about 40 % too steep (true 3.0, recovered ~4.3),
-which more calibrations do not remove but more trials per calibration do; fixing the lapse at
-the QUEST+ value 0.05 inflates it further (~7); a free lapse is recovered well, best with the
-catch trials, so the real refit uses each calibration's QUEST+ and catch trials (warm-up
-trials left out). The refitted slope is therefore an upper estimate.
+maximum likelihood on the pooled calibration trials (each calibration's QUEST+ and catch
+trials; warm-up trials left out) and tests with a likelihood-ratio test whether the slope
+differs between standing and walking, rather than assuming it does not. A short calibration
+places its trials near threshold, where the slope is poorly constrained, so the refitted slope
+is read as an upper estimate.
 
 **Procedure.** Two interleaved trackers (prior centres 4° and 2.5°, prior SD 0.5 log₁₀) in
 shuffled order. The **final estimate is the pooled posterior** over both trackers' trials.
 Calibration stops once the pooled posterior SD ≤ 0.10 log₁₀ (≥ 30 scored trials, ≤ 100 in
 total), with an early abort at 80 trials if the SD is still > 0.18. Tracker agreement is
-logged as a robustness flag. These rules were set and validated by simulation
-(`python -m Analysis.calibration convergence`).
+logged as a robustness flag. These rules were set by simulation before data collection.
 
 **Warm-up and catch trials.** Each calibration opens with 5 warm-up trials on a descending
 ramp (12° → 6°), and every 6th scored trial is followed by an unmistakable 12° catch trial;
@@ -276,8 +268,8 @@ clear of the 2 s response window.
 **In walking the jitter accumulates.** Onset time is a bounded random walk (reflected at ±3 s)
 rather than a fixed grid plus independent jitter. On a fixed grid, a stride period that divides
 the ISI — 1.0 s, an ordinary 120 steps/min — puts every onset at nearly the same stride phase,
-and the ±0.75 s jitter alone does not spread it uniformly (Rayleigh R ≈ 0.2). Accumulating the
-jitter decorrelates onset time from any stride period (R ≈ 0.07 from 75 to 133 steps/min).
+and the ±0.75 s jitter alone does not spread it uniformly. Accumulating the jitter
+decorrelates onset time from the stride period over the range of normal cadences.
 Coverage is checked per recording (`onset_phase_coverage`).
 
 ### Run structure
@@ -291,8 +283,10 @@ before the belt stops. The setup scene activates every connected display
 
 A valid number in the setup screen's **Threshold** field is used directly as the 75 %
 threshold and skips calibration (to resume after a crash). Easy and hard derive from it via
-`easyFactor` = 1.26 and `hardFactor` = 0.76, the model-implied 85 % / 65 % ratios for γ = 0.5,
-β = 2.5, λ = 0.02; keep them in step with `StaircaseManager` if the model changes.
+`easyFactor` = 1.26 and `hardFactor` = 0.76. These are the 85 % / 65 % ratios for γ = 0.5,
+β = 2.5 and λ = 0.02; with the calibration's λ = 0.05 the easy ratio would be 1.28, so an
+override gives a slightly harder easy level than a calibration. Keep the factors in step with
+`StaircaseManager` if the model changes.
 
 ### Key tunable fields
 
@@ -428,8 +422,7 @@ the FAIR principles that funders and journals increasingly ask for (Wilkinson et
 
 For an open-source release this matters twice. A lab that runs this paradigm
 gets a dataset that others can reuse as it is, and the pipeline reads only the standard
-layout, so it works on any dataset converted this way, the synthetic one from
-`simulate_participants` included.
+layout, so it works on any dataset converted this way.
 
 The converter also writes [data/README.md](data/README.md), which explains the layout. In
 short: `ses-01` holds the calibrations and `ses-02` the experiment blocks, each from both
@@ -440,57 +433,37 @@ the blocks apart, and `sub-XX_scans.tsv` records each file's visit.
 
 ## 7. Design and power
 
-The effect size is **measured, not assumed**: it comes from Davidson et al.'s (2024) raw data
-(OSF `8djtq`), refitted and checked against the authors' stored outputs, and the power figures
-come from simulating this pipeline's own tests at that effect. Code and write-up:
-[`Analysis/davidson_power/`](Analysis/davidson_power/README.md).
+The sample size and the trial budget were set with a simulation-based power analysis before
+data collection. The effect size came from the raw data of Davidson et al. (2024) (OSF
+`8djtq`): each participant's stride-phase modulation was refitted from the trial data and
+checked against the authors' stored outputs. Studies with that effect were then simulated at
+different numbers of participants and walking trials and analysed with the same tests this
+pipeline runs, so the power refers to the confirmatory test as it is implemented. The
+simulation code is not part of this repository.
 
-**Sample size: 20 participants will be recruited.** The minimum requirement is **12 analysable
-participants**, the N at which the confirmatory test reaches 0.93 power under the adopted design
-(below); the margin of 8 covers exclusions and drop-out across the two visits.
+**Sample size.** 20 participants are recruited. The power analysis set the minimum at 12
+analysable participants; the margin covers exclusions and drop-out across the two visits.
 
-### The number that shapes the analysis: R = 0.33
+**Why the population test is phase-agnostic.** In Davidson's data the participants' preferred
+phases differ. Averaging coefficients that point in different directions cancels much of the
+signal, so a test for a common phase loses sensitivity, and prevalence depends on how
+sensitive the per-participant test is. The confirmatory test therefore asks whether
+individuals oscillate at all, each at their own phase; the common-phase test and prevalence
+are secondary. A null common-phase result beside a positive phase-agnostic one is what
+individual phases produce, not a contradiction.
 
-Davidson's participants oscillate at **idiosyncratic preferred phases**; their cross-participant
-phase coherence is only R = 0.33. Averaging coefficients that point in different directions
-cancels most of the signal, which decides the population test:
+**Trial budget: 8 walking + 2 standing blocks.** The power analysis compared ways of splitting
+the session time between walking and standing. The walking trials carry the confirmatory
+test. Standing serves the walking-versus-standing threshold contrast, the clock-time control
+and the locomotion interaction; the threshold contrast is within-participant, so one standing
+block per visit suffices. The design is powered for the population test, so the
+per-participant test and prevalence are exploratory.
 
-| Population test | Asks | Power at N = 12 |
-|---|---|---|
-| **phase-agnostic** `Σᵢ |zᵢ|²/sᵢ²` | does each individual oscillate, at their own phase? | **0.92** ← confirmatory |
-| common-phase Hotelling T² | does the population oscillate at one shared phase? | 0.15 |
-| Bayesian prevalence | how many individuals pass a per-participant test? | ~0.15 |
-
-A null common-phase result next to a positive phase-agnostic one is therefore the **expected**
-pattern, not a contradiction.
-
-### The trial budget: 8 walking + 2 standing blocks
-
-![Design trade-off](Analysis/figures/design_tradeoff.png)
-
-| | Confirmatory power | Standing threshold SD |
-|---|---|---|
-| 6 walking / 4 standing | 0.81 (N = 12) · 0.87 (N = 15) | 4.0 % of threshold |
-| **8 walking / 2 standing (adopted)** | **0.93** (N = 12) · **0.96** (N = 15) | 5.7 % of threshold |
-
-Standing serves the walking-versus-standing threshold contrast, the clock-time control and the
-locomotion interaction. The threshold contrast is **within-participant**, so it cancels the
-between-participant spread: at one standing block per visit its power is already **0.994** for
-a 1.10× threshold ratio. The split also buys robustness to attrition: N = 12 still clears 0.90.
-
-### Limits
-
-- **Per-participant detection is out of reach** (~0.20 at 1440 trials; 26 % even at 2160), so
-  the per-participant test and prevalence are **exploratory**. This is a property of the effect
-  size, not of the pipeline.
-- **The power figures are a ceiling.** The simulation gives every participant identical trial
-  counts, accuracy and uniform phase coverage; 20 participants are recruited so that at least
-  the 12 the power analysis requires remain analysable after exclusions and drop-out.
-- **The real cost is fatigue**: 48 min of walking per visit. Breaks are 5 min after every second
-  walking block, and `qc.py` flags easy-trial accuracy per block and first versus last third.
-- **The effect size is smaller than first assumed.** An earlier extraction gave 0.071; reading
-  the right data slice, removing duplicated stride windows and not selecting on the authors'
-  significance flag gives 0.026 (documented in `Analysis/davidson_power/README.md`).
+**Assumptions and limits.** The simulated studies give every participant the same trial count,
+accuracy and uniform phase coverage; the recruitment margin is there for the losses real data
+bring. The main practical cost of the design is fatigue: 48 min of walking per visit. Breaks
+are 5 min after every second walking block, and `qc.py` flags easy-trial accuracy per block
+and first versus last third.
 
 ---
 
@@ -504,15 +477,14 @@ raw logs → bidsify → BIDS dataset → calibration → presentation rule + ex
 → tables (one row per trial, one per step) → phase_analysis (per participant)
 → population (CONFIRMATORY phase-agnostic test; common phase, prevalence)
 → bayes_glmm / threshold_phase (secondary) → clocktime_control (stride vs clock control)
-→ conditions (standing vs walking, H5, calibration transfer) → power (operating point and power)
+→ conditions (standing vs walking, threshold contrast, calibration transfer)
 → exploratory modules → report (HTML summary)
 ```
 
 ```bash
 pip install -r Analysis/requirements.txt
-python -m Analysis.simulate_participants --n 8 --keep   # synthetic participants, whole pipeline (no data needed)
-python -m Analysis.run_pipeline                         # every stage, on data/ (needs real logs in data/)
-python -m pytest Analysis/tests -q                      # 112 inject-and-recover validation tests
+python -m Analysis.run_pipeline                         # every stage, on a BIDS dataset in data/
+python -m pytest Analysis/tests -q                      # inject-and-recover validation tests
 ```
 
 Every block becomes its own BIDS recording through a **`run-` entity**, and all analyses
@@ -529,7 +501,7 @@ the pooled permutation null; it is rotation-invariant per participant, so it det
 oscillation at whatever phase each person has. Secondary routes: a Hotelling T² for a common
 phase (`population.py`), Bayesian mixed models with a standing control on a virtual stride
 clock (`bayes_glmm.py`), and Bayesian prevalence (Ince et al. 2022)
-de-biased by measured detection power. A **clock-time control** folds onsets on fixed temporal
+with the test's sensitivity set to 1, a lower bound. A **clock-time control** folds onsets on fixed temporal
 periods instead of the stride, to rule out an effect locked to time rather than to gait.
 
 **Long tables for analyses outside the pipeline:** `tables.py` writes every trial
@@ -539,10 +511,8 @@ every walking step (duration, stance foot, sway and bob), joinable on
 
 **The operating point.** Each block runs at the threshold its calibration measured.
 The calibration transfer (`conditions.py`) checks whether the blocks land at the intended
-75 %, the calibration cost (`power.py`) simulates what the calibration error costs in power, and
-`threshold_phase.py` repeats the stride-phase test on the threshold scale, weighting each
-trial by the information it carries about a threshold shift. `power.py` also gives the
-power for an oscillation shared by all participants, the kind a group-average curve shows.
+75 %, and `threshold_phase.py` repeats the stride-phase test on the threshold scale, weighting
+each trial by the information it carries about a threshold shift.
 
 **Further analyses, all exploratory:**
 
@@ -669,7 +639,7 @@ except the dataset metadata out of the repository.
   author = {Abele-Kretz, Christian},
   title  = {{PACE}: Perception Across Cyclic Events},
   year   = {2026},
-  url    = {https://github.com/ChristianAbele02/PACE},
+  url    = {https://github.com/ChristianAbele02/pace-gait-perception},
   note   = {Master's thesis project, Bielefeld University}
 }
 ```

@@ -20,8 +20,8 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import config as C
 
-# Spec order is task, tracksys, acq, run. Datasets written before 2026-09-21 put acq
-# before tracksys; that order is still accepted when reading.
+# Spec order is task, tracksys, acq, run. The older order (acq before tracksys) is also
+# accepted when reading.
 _REC_RE = re.compile(
     r"^(?P<sub>sub-\d+)_(?P<ses>ses-\d+)_task-(?P<task>[a-zA-Z0-9]+)"
     r"(?:_acq-(?P<acq_old>[a-zA-Z0-9]+))?"
@@ -454,10 +454,9 @@ def find_recordings(bids_dir: Path | None = None, *, include_excluded: bool = Fa
 def scan_meta(rec: Recording, bids_dir: Path | None = None) -> dict:
     """This recording's row from ``sub-XX_scans.tsv``, as a plain dict.
 
-    Includes the counterbalance logged since 2026-08-18: ``visit``,
-    ``condition_order_first``, ``condition_position`` (first or second in its visit) and
-    ``acq_time``. Older recordings lack them or have ``n/a``; callers must handle a
-    missing ``condition_position``.
+    Includes the counterbalance: ``visit``, ``condition_order_first``,
+    ``condition_position`` (first or second in its visit) and ``acq_time``. Logs without
+    these columns have ``n/a``; callers must handle a missing ``condition_position``.
     """
     bids_dir = Path(bids_dir or C.BIDS_DIR)
     tsv = bids_dir / rec.sub / f"{rec.sub}_scans.tsv"
@@ -497,8 +496,8 @@ def load_motion(rec: Recording) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
 
     Use the ``t`` column (true sample time) for timing, not the row index.
 
-    ``_motion.tsv`` has no header; column names come from ``_channels.tsv``. Files written
-    before 2026-09-21 have a header row, which is detected.
+    ``_motion.tsv`` has no header; column names come from ``_channels.tsv``. A header row,
+    as in older files, is detected.
     """
     channels = pd.read_csv(rec.channels_tsv, sep="\t", na_values=["n/a"])
     names = channels["name"].astype(str).tolist()
@@ -612,14 +611,7 @@ DERIVATIVE_GROUPS = {
         "gait_prc": "Gait phase shifts after stimulus onsets and button presses (phase "
                     "response curve; gait_dynamics.py).",
     },
-    "Power and summary": {
-        "calibration_cost": "What the calibration error costs: its structure, the "
-                            "information the blocks keep, and the power of the "
-                            "confirmatory and information-weighted tests at the planned "
-                            "N (power.py).",
-        "shared_power": "Power of the phase-agnostic, common-phase and pooled tests for an "
-                        "oscillation shared by all participants, at the analysed and the "
-                        "planned sample (power.py).",
+    "Summary": {
         "summary": "Dataset summary tables, block inventory, data-quality overview and the "
                    "HTML report (report.py).",
         "sensitivity": "Sensitivity analyses run on demand, not by the pipeline: the "
