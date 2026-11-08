@@ -38,7 +38,20 @@ discrimination.
 > **So the experiment does not run out of the box.** It needs a CAVE with UniCave-style render
 > nodes, OptiTrack tracking and a treadmill bridge, and the placeholders set for that rig
 > ([INSTRUCTIONS.md §12](INSTRUCTIONS.md#12-one-time-rig-setup)). The **analysis pipeline**
-> runs anywhere with Python.
+> runs anywhere with Python, given a dataset converted from the session logs.
+
+> **About this repository.** PACE is a curated public release of the project's code. The
+> project was developed in a private repository, so the history here begins with the first
+> release and later changes arrive in batches; the private repository can be shown to
+> examiners on request. Some components of the thesis analysis are not included:
+> - the simulation code of the power analysis (§7 describes the method);
+> - the synthetic-participant generator and the simulations used to design the QUEST+
+>   calibration;
+> - the tests that depended on these.
+>
+> One analysis therefore differs from the thesis. Here, Bayesian prevalence assumes a test
+> sensitivity of 1 and gives a lower bound. In the thesis it was de-biased with the
+> per-participant sensitivity, which was estimated by simulation.
 
 **Where to go:** ▶️ run a session → [INSTRUCTIONS.md](INSTRUCTIONS.md) · 📊 analysis pipeline →
 [Analysis/README.md](Analysis/README.md)
