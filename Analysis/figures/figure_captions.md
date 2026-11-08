@@ -99,7 +99,7 @@ vector PDF. **Submit the PDF.**
 | Panel active area | 142 × 80 cm (65″) |
 | Resolution per wall | 3840 × 2160 px |
 | Eye-to-front-wall distance | ~100 cm |
-| Eye height | ~164 cm |
+| Eye height | 170 cm (Hofmann 2023 reference) |
 | Pixels per degree | ~47 (15.7 px per cycle at 3 cpd) |
 | Projection model | off-axis, tracked eye |
 | Tracking | OptiTrack → VRPN → Unity |
