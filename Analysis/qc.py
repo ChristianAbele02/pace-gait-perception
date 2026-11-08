@@ -160,7 +160,7 @@ def _vigilance_qc(real: "pd.DataFrame") -> dict:
     Easy trials (10 % of each block) are near ceiling and insensitive to the stride-phase
     effect. Low or declining easy-trial accuracy indicates inattention.
 
-    Only flagged. The exclusion gate (block_rules.py) does not use easy-trial accuracy.
+    Only flagged. The exclusion gate (exclusion.py) does not use easy-trial accuracy.
     """
     out = {"n_easy": 0}
     if real.empty or "difficulty" not in real.columns:

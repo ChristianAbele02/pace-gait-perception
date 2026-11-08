@@ -1,4 +1,14 @@
-"""Dataset summary tables and one HTML report (b6 / b7).
+"""Dataset summary, data-quality overview and the HTML report.
+
+Usage::
+
+    python -m Analysis.report
+
+
+Dataset summary and HTML report
+===============================
+
+Dataset summary tables and one HTML report (b6 / b7).
 
 Combines the per-recording derivatives (QC, gait, stride phase) and the population results
 into one table and one HTML page. Also reports per participant the target count and the
@@ -11,11 +21,58 @@ Outputs (``derivatives/summary/``):
   * ``exclusions.tsv``, ``block_inventory.tsv``, ``counterbalance_qc.tsv``,
     ``provenance.json``;
   * ``data_quality.md`` and its two TSVs: recorded / kept / excluded counts with
-    standard exclusion labels, written by ``data_quality.main``.
+    standard exclusion labels, written by ``report.data_quality_main``.
 
-Usage::
 
-    python -m Analysis.report
+Data-quality overview
+=====================
+
+Data-quality overview: what was recorded, kept and excluded, with standard reasons.
+
+Reads the exclusion gate (``derivatives/qc/gate.tsv``, built by ``exclusion.py``) and the
+planned runs (``config.PLANNED_RUNS``) and sums them up per participant x condition, per
+condition and overall, at block and at trial level. Every exclusion carries one label
+from a fixed set, so the counts compare across participants:
+
+  * blocks, automatic rule (``exclusion.py``): ``Low frame rate``,
+    ``Chance-level accuracy``, ``Too many timeouts``, ``Reversed responses``;
+  * blocks, manual list (``config.EXCLUDED_RECORDINGS``, labelled in
+    ``config.EXCLUSION_LABELS``): ``Technical failure``, ``No valid walking``,
+    ``Manual exclusion`` (fallback); every block and calibration of a participant rated
+    "not useful": ``Participant not useful``;
+  * calibrations: ``Unreliable calibration``;
+  * planned blocks without a recording: ``Not recorded``, or ``Visit pending`` when the
+    visit lies after the participant's last recorded one (``Visit cancelled`` for a
+    participant in ``config.VISITS_CANCELLED``).
+
+The participant roster gives each participant a status from the gate:
+
+  * ``not useful``: no block kept in the behaviour scope, or rated "not useful";
+  * ``pending``: a planned visit is still to come;
+  * ``useful``: every planned block recorded and kept;
+  * ``partial``: anything else (a block lost, a visit cancelled).
+
+Next to it stands the experimenter's own rating (``config.PARTICIPANT_RATINGS``: very good,
+good, weak, not useful), which bidsify also writes to ``participants.tsv``.
+
+A block failing several criteria gets the most specific as its label (manual, then frame
+rate, reversal, timeouts, chance) and all of them in ``all_labels``. Trial counts are main
+trials; the training trials that open every block are never analysed and are counted
+apart. Kept trials are the answered main trials of the blocks the behaviour scope keeps,
+whose presentation was valid; timeouts in those blocks, and their trials removed by the
+presentation rule (``exclusion.py``, label ``Presentation artefact``), are counted
+separately.
+
+Outputs (under ``derivatives/summary/``):
+  * ``data_quality.md`` — the overview tables, with the label legend.
+  * ``data_quality_summary.tsv`` — the same counts, one row per participant x condition,
+    per condition and in total.
+  * ``data_quality_units.tsv`` — one row per block, calibration and missing planned
+    block, with its label.
+  * ``participant_roster.tsv`` — one row per participant: status, rating, visits, and
+    blocks recorded and kept per condition.
+
+``report.py`` (the pipeline's last stage) writes them on every run.
 """
 from __future__ import annotations
 
@@ -33,22 +90,24 @@ from pathlib import Path
 import pandas as pd
 
 try:
-    from . import config as C
     from . import bids_io
+    from . import config as C
+    from . import exclusion
     from . import phase_analysis as pa
-    from . import block_rules
-    from . import data_quality
     from . import power
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import config as C
     import bids_io
+    import config as C
+    import exclusion
     import phase_analysis as pa
-    import block_rules
-    import data_quality
     import power
 
 
+
+# ###########################################################################
+# Dataset summary and HTML report
+# ###########################################################################
 def _load(path: Path):
     return json.loads(path.read_text()) if path.exists() else {}
 
@@ -80,7 +139,7 @@ def provenance() -> dict:
         "git_dirty": bool(_git("status", "--porcelain")),
         "python": platform.python_version(),
         "packages": {p: _pkg_version(p)
-                     for p in ("numpy", "pandas", "scipy", "matplotlib", "statsmodels")},
+                     for p in ("numpy", "pandas", "scipy", "matplotlib")},
         "config": {
             "NOMINAL_FS": C.NOMINAL_FS,
             "STIM_DURATION_S": C.STIM_DURATION_S,
@@ -102,10 +161,8 @@ def _provenance_html(prov: dict) -> str:
 
 
 # --- Inclusion / exclusion ---------------------------------------------------
-# Exclusion decisions come from the gate (block_rules.py). Other issues (unusable head
+# Exclusion decisions come from the gate (exclusion.py). Other issues (unusable head
 # data, side bias, low L/R alternation, unreliable foot labels) are non-blocking warnings.
-# Alias kept for existing callers and tests.
-_calibration_verdict = block_rules.calibration_verdict
 
 
 # --- Counterbalance QC ------------------------------------------------------
@@ -254,7 +311,7 @@ def _exclusions(rows: list[dict], gate: dict[str, dict] | None = None) -> list[d
             warns.append(f"low L/R alternation {lr}%")
         fv = r.get("foot_label_verdict")
         if fv and (str(fv).startswith("unreliable") or fv == "unusable"):
-            # Only stance_foot.py uses foot labels and it skips such runs; the 2/4 cps test
+            # Only response_bias.py uses foot labels and it skips such runs; the 2/4 cps test
             # does not depend on them.
             warns.append(f"stance-foot labels {fv} (stance_foot analysis skips this run)")
         out.append({
@@ -300,7 +357,7 @@ def _rows():
         acc_meas = phase.get("measures", {}).get("accuracy", {})
         n_targets = phase.get("n_trials", beh.get("n_analysis_trials", 0))
         s_hat = power.sensitivity(int(n_targets), amp=power.REF_AMP) if n_targets else 0.0
-        # visit, to match the block with its calibration
+        # visit, to match the block with its calibration (exclusion.calibration_verdict)
         visit = (bids_io.scan_meta(rec) or {}).get("visit")
         rows.append({
             "recording": rec.label(),
@@ -317,7 +374,7 @@ def _rows():
             "accuracy": beh.get("accuracy_overall"),
             "median_rt_s": beh.get("median_rt_s"),
             "response_right_bias": beh.get("response_right_bias"),
-            "calibration_verdict": _calibration_verdict(sub, rec.condition, visit),
+            "calibration_verdict": exclusion.calibration_verdict(sub, rec.condition, visit),
             "gait_freq_hz": gait.get("dominant_freq_hz"),
             "stride_dur_s": gait.get("stride_duration_s"),
             "lr_alternation_pct": gait.get("lr_alternation_pct"),
@@ -378,9 +435,6 @@ def _figures_html() -> str:
         ("Population — secondary", [
             ("Common-phase population test (Hotelling T2)",
              fig("population", "population_common_phase.png")),
-            ("Hierarchical GLMM, common-phase", fig("population", "population_glmm.png")),
-            ("Stride-phase modulation x difficulty (H6)",
-             fig("population", "population_glmm_difficulty.png")),
             ("Population prevalence (Fig 4)", fig("population", "population_fig4_prevalence.png")),
             ("Per-participant phase (Fig 5)", fig("population", "population_fig5_phase.png")),
         ]),
@@ -403,7 +457,6 @@ def _figures_html() -> str:
             ("Gait and tracking quality", fig("descriptive", "descriptive_quality.png")),
         ]),
         ("Exploratory add-ons", [
-            ("Onset vs response locus", fig("onset_response", "onset_response_population.png")),
             ("Stance-foot contrast (which foot is down)",
              fig("stance_foot", "stance_foot_population.png")),
             ("Response direction by stance foot",
@@ -412,16 +465,10 @@ def _figures_html() -> str:
              fig("sdt", "sdt_population.png")),
             ("Head roll and the left/right response", fig("roll_bias", "roll_bias_population.png")),
             ("Button presses over the stride", fig("press_phase", "press_phase_population.png")),
-            ("Accuracy and the stride phase at the press",
-             fig("press_accuracy", "press_accuracy_population.png")),
             ("Group-average-curve analysis, calibrated on our design",
              fig("group_curve", "group_curve.png")),
-            ("Cyclic-spline GAM + mutual information", fig("gam_phase", "gam_phase.png")),
-            ("Drift-diffusion decomposition", fig("ddm_phase", "ddm_phase_pooled.png")),
         ]),
         ("Exploratory gait", [
-            ("Stride-phase methods on held-out signals",
-             fig("gait_phase_methods", "phase_methods.png")),
             ("Head stabilisation over the stride", fig("head_stability", "head_stability_profiles.png")),
             ("Head stabilisation summary", fig("head_stability", "head_stability_summary.png")),
             ("Head kinematics over the stride", fig("head_kinematics", "head_kinematics.png")),
@@ -429,7 +476,6 @@ def _figures_html() -> str:
             ("Gait phase-response curve", fig("gait_prc", "gait_prc.png")),
         ]),
         ("Planning and calibration", [
-            ("Prevalence precision vs N", fig("planning", "prevalence_precision_vs_N.png")),
             ("Power for a shared stride-phase oscillation",
              fig("shared_power", "shared_power.png")),
             ("Calibration refit (simulation)",
@@ -447,42 +493,9 @@ def _figures_html() -> str:
     return "\n".join(ds_blocks + blocks)
 
 
-def _glmm_summary() -> str:
-    """GLMM estimates (no tests) followed by the common-phase Hotelling result.
-
-    The GLMM has no p-values: its variational Wald test had a 60 % false-positive rate and
-    was removed. The Hotelling test is shown directly below the estimates.
-    """
-    g = _load(C.DERIV_DIR / "population" / "population_glmm.json")
+def _common_phase_summary() -> str:
+    """The common-phase Hotelling result and the paired walking - standing test."""
     html = ""
-    if g:
-        html = (f"<h2>Population GLMM (accuracy @ 2 cps) &mdash; descriptive</h2>"
-                f"<p>{g.get('method')}<br>"
-                f"n={g.get('n_participants')} participant(s), {g.get('n_trials')} trials; "
-                f"amplitude {g.get('amp_logit')} logit "
-                f"(~{g.get('amp_hitrate')} hit-rate); preferred phase "
-                f"{g.get('preferred_phase_rad')} rad."
-                f"<br><span class='note'>Estimates only. This model reports no p-values: "
-                f"its variational Wald test measured a 60 % false-positive rate under "
-                f"idiosyncratic phases and has been removed. Inference is the "
-                f"phase-agnostic confirmatory test and the Hotelling T&sup2; below."
-                f"</span></p>")
-        cm = g.get("condition_model")
-        if cm:
-            le, sc, wi = (cm["locomotion_effect"], cm["standing_oscillation_control"],
-                          cm["walking_specific_oscillation"])
-            html += (f"<p><b>Locomotion &times; stride-phase</b> "
-                     f"({cm['n_walking']} walking + {cm['n_standing']} standing trials):<br>"
-                     f"locomotion effect OR={le['odds_ratio']} "
-                     f"(~{le['approx_acc_delta']:+.3f} hit-rate);<br>"
-                     f"standing oscillation amplitude (negative control) "
-                     f"{sc['amp_logit']} logit;<br>"
-                     f"walking-specific oscillation amplitude {wi['amp_logit']} logit."
-                     f"<br><span class='note'>Standing 'phase' is a head-motion surrogate "
-                     f"(no stride), so its amplitude is a negative control expected near "
-                     f"zero. The locomotion-specificity TEST is the paired Hotelling "
-                     f"T&sup2; below.</span></p>")
-
     cp = _load(C.DERIV_DIR / "population" / "population_common_phase.json")
     if cp:
         html += "<h2>Common-phase population test &mdash; Hotelling T&sup2; (secondary)</h2>"
@@ -507,8 +520,9 @@ def _glmm_summary() -> str:
                     rows.append(f"{fk}: not estimable")
                     continue
                 star = " *" if dd.get("significant") else ""
+                verdict = f" ({dd['verdict']})" if dd.get("verdict") else ""
                 rows.append(f"{fk}: F(2,{dd['df2']})={dd['f']:.2f}, "
-                            f"Holm p={dd['p_holm']:.4f}{star}")
+                            f"Holm p={dd['p_holm']:.4f}{star}{verdict}")
             html += ("<p><b>Locomotion specificity</b> (paired walking &minus; standing): "
                      + "; ".join(rows) + "</p>")
         html += ("<p class='note'>Secondary. Asks whether the population oscillates at a "
@@ -545,7 +559,7 @@ def main():
     inv_html = (inv.to_html(index=False, na_rep="n/a", border=0, classes="summary")
                 if not inv.empty else "<p><em>no participants</em></p>")
 
-    _, dq = data_quality.main(quiet=True)
+    _, dq = data_quality_main(quiet=True)
     dq_html = (dq.to_html(index=False, na_rep="n/a", border=0, classes="summary")
                if not dq.empty else "<p><em>no gate</em></p>")
 
@@ -574,7 +588,7 @@ amplitude {power.REF_AMP} at the achieved target count (b7).</p>
 {_provenance_html(prov)}
 <h2>Exclusion gate ({n_incl}/{len(edf)} blocks in the behavioural analyses, {n_gait}/{len(edf)} in the gait analyses)</h2>
 <p class="note">Every analysis reads one file, <code>derivatives/qc/gate.tsv</code>
-(Analysis/block_rules.py). <code>behaviour</code>: blocks used by analyses of the responses;
+(Analysis/exclusion.py). <code>behaviour</code>: blocks used by analyses of the responses;
 excluded are the manual list (config.EXCLUDED_RECORDINGS) and, while
 <code>config.APPLY_BLOCK_RULE</code> is on (now {getattr(C, "APPLY_BLOCK_RULE", False)}), blocks
 logged at too low a frame rate, blocks whose accuracy on the answered trials is significantly
@@ -586,7 +600,7 @@ there. Warnings never exclude anything.</p>
 {excl_table_html}
 <h2>Data quality overview</h2>
 <p class="note">Blocks and trials recorded, kept and excluded per participant x condition,
-per condition and in total, with standard exclusion labels (Analysis/data_quality.py;
+per condition and in total, with standard exclusion labels (Analysis/report.py;
 legend and per-block register in <code>summary/data_quality.md</code>).</p>
 {dq_html}
 <h2>N per analysis stage</h2>
@@ -605,7 +619,7 @@ gaps in the head data get no stride phase.</p>
 {inv_html}
 <h2>Summary table</h2>
 {table_html}
-{_glmm_summary()}
+{_common_phase_summary()}
 <h2>Figures</h2>
 {_figures_html()}
 </body></html>"""
@@ -656,6 +670,351 @@ gaps in the head data get no stride phase.</p>
         print(f"Counterbal.  -> {out_dir/'counterbalance_qc.tsv'}")
     print(f"Provenance   -> {out_dir/'provenance.json'}")
     print(f"HTML report  -> {out_dir/'report.html'}")
+
+
+# ###########################################################################
+# Data-quality overview
+# ###########################################################################
+MANUAL_LABELS = ("Technical failure", "No valid walking", "Participant not useful",
+                 "Manual exclusion")
+LEGEND = [
+    ("Low frame rate", "block",
+     "the head node logged below config.BLOCK_RULE_MIN_SAMPLING_HZ or kept the stimulus on "
+     "screen over config.BLOCK_RULE_MAX_STIM_FACTOR x its nominal time; out of the gait "
+     "analyses as well"),
+    ("Chance-level accuracy", "block",
+     "the participant's accuracy over the answered trials of all their blocks in that "
+     "condition not above 50 % (one-sided binomial, config.BLOCK_RULE_ALPHA)"),
+    ("Too many timeouts", "block",
+     "at least config.BLOCK_RULE_MAX_TIMEOUT_FRACTION of the main trials unanswered"),
+    ("Reversed responses", "block",
+     "accuracy significantly below 50 %: swapped keys or an invalid stimulus"),
+    ("Technical failure", "block (manual)",
+     "a rig or tracking malfunction invalidated the block (operator report)"),
+    ("No valid walking", "block (manual)",
+     "a usable standing block of a participant without any valid walking block, left out "
+     "so the participant does not enter the walking-vs-standing contrasts"),
+    ("Participant not useful", "block, calibration (manual)",
+     "the participant is rated \"not useful\" (config.PARTICIPANT_RATINGS) and left out "
+     "of every analysis, gait included"),
+    ("Manual exclusion", "block (manual)",
+     "any other manual exclusion; the reason is in config.EXCLUDED_RECORDINGS"),
+    ("Unreliable calibration", "calibration",
+     "the QUEST+ fit failed its reliability check; leaves the pooled calibration refit "
+     "only, not the blocks run on it"),
+    ("Training trial", "trial", "the practice trials opening every block; never analysed"),
+    ("Timeout", "trial", "no response in the response window; left out of accuracy"),
+    ("Presentation artefact", "trial",
+     "the head tracking froze, jumped or dropped out between 0.3 s before onset and 0.1 s "
+     "after the Gabor went off, so the view may have moved while it was shown "
+     "(exclusion.py); left out of every trial-based analysis"),
+    ("Not recorded", "planned block", "a planned run with no recording"),
+    ("Visit pending", "planned block", "a planned run of a visit not yet recorded"),
+    ("Visit cancelled", "planned block",
+     "a planned run of a visit that will not be recorded (config.VISITS_CANCELLED)"),
+]
+STATUS_LEVELS = ("useful", "partial", "pending", "not useful")
+_RULE_LABELS = (("frame rate", "Low frame rate"), ("reversal", "Reversed responses"),
+                ("timeouts", "Too many timeouts"), ("chance", "Chance-level accuracy"))
+
+
+def _rule_labels(rule: str) -> list[str]:
+    """Standard labels of the automatic-rule criteria a unit failed, most specific first."""
+    keys = {part.split(":", 1)[0].strip() for part in str(rule).split(";")}
+    return [lab for key, lab in _RULE_LABELS if key in keys]
+
+
+def _int(v) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def unit_rows(gate: pd.DataFrame, training: dict[str, int] | None = None,
+              planned: dict | None = None, labels: dict[str, str] | None = None,
+              cancelled: dict[str, str] | None = None) -> pd.DataFrame:
+    """One row per block, calibration and missing planned block, with its standard label.
+
+    ``gate`` is the gate table as ``bids_io.load_gate`` returns it, ``training`` the
+    number of training trials per block, ``planned``, ``labels`` and ``cancelled`` default
+    to ``config.PLANNED_RUNS``, ``config.EXCLUSION_LABELS`` and ``config.VISITS_CANCELLED``.
+    """
+    training = training or {}
+    planned = C.PLANNED_RUNS if planned is None else planned
+    labels = getattr(C, "EXCLUSION_LABELS", {}) if labels is None else labels
+    cancelled = getattr(C, "VISITS_CANCELLED", {}) if cancelled is None else cancelled
+    rows = []
+    for _, g in gate.iterrows():
+        run = re.search(r"_run-(\d+)", g["recording"])
+        manual = g.get("manual", "-") not in ("-", "", "n/a")
+        man_label = labels.get(g["recording"]) or (
+            "Participant not useful" if g.get("manual") == bids_io.NOT_USEFUL_REASON
+            else "Manual exclusion")
+        crit = [man_label] if manual else []
+        if g["unit"] == "block":
+            crit += _rule_labels(g.get("rule", ""))
+        elif str(g.get("rule", "")).startswith("calibration"):
+            crit.append("Unreliable calibration")
+        excluded = g["behaviour"] == "exclude"
+        n_test, n_answered = _int(g.get("n_trials")), _int(g.get("n_answered"))
+        is_block = g["unit"] == "block"
+        n_flag = _int(g.get("n_presentation_flagged")) if is_block else 0
+        rows.append({
+            "unit": g["unit"], "status": "recorded", "recording": g["recording"],
+            "participant": g["participant"], "condition": g["condition"],
+            "visit": _int(g.get("visit")) or "n/a",
+            "run": int(run.group(1)) if run else "n/a",
+            "n_training": training.get(g["recording"], "n/a") if is_block else "n/a",
+            "n_trials": n_test + n_flag,
+            "n_presentation_flagged": n_flag,
+            "n_answered": n_answered if is_block else n_test,
+            "n_timeouts": n_test - n_answered if is_block else 0,
+            "n_correct": _int(g.get("n_correct")),
+            "behaviour": g["behaviour"], "gait": g.get("gait", "n/a"),
+            "label": crit[0] if excluded and crit else "-",
+            "all_labels": "; ".join(crit) if excluded else "-",
+        })
+    df = pd.DataFrame(rows)
+    blocks = df[df["unit"] == "block"] if not df.empty else df
+    for sub, sb in (blocks.groupby("participant") if not blocks.empty else []):
+        recorded_visits = [v for v in sb["visit"] if v != "n/a"]
+        last = max(recorded_visits, default=0)
+        for cond, visits in planned.items():
+            have = set(sb.loc[sb["condition"] == cond, "run"])
+            for visit, runs in visits.items():
+                for run in runs:
+                    if run in have:
+                        continue
+                    lab = ("Not recorded" if visit <= last else
+                           "Visit cancelled" if sub in cancelled else "Visit pending")
+                    rows.append({
+                        "unit": "block", "status": "missing", "recording": "n/a",
+                        "participant": sub, "condition": cond, "visit": visit, "run": run,
+                        "n_training": "n/a", "n_trials": 0, "n_presentation_flagged": 0,
+                        "n_answered": 0,
+                        "n_timeouts": 0, "n_correct": 0, "behaviour": "n/a", "gait": "n/a",
+                        "label": lab, "all_labels": lab})
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out["_u"] = out["unit"].map({"block": 0, "calibration": 1})
+    out["_r"] = pd.to_numeric(out["run"], errors="coerce")
+    out = out.sort_values(["_u", "participant", "condition", "_r"]).drop(columns=["_u", "_r"])
+    return out.reset_index(drop=True)
+
+
+def _count_labels(labels: pd.Series) -> str:
+    c = labels[labels != "-"].value_counts()
+    return "; ".join(f"{n}x {lab}" for lab, n in c.items()) or "-"
+
+
+def _summarise(b: pd.DataFrame, cal: pd.DataFrame) -> dict:
+    rec = b[b["status"] == "recorded"]
+    kept = rec[rec["behaviour"] == "include"]
+    excl = rec[rec["behaviour"] == "exclude"]
+    answered = kept["n_answered"].sum()
+    return {
+        "blocks_recorded": len(rec), "blocks_kept": len(kept), "blocks_excluded": len(excl),
+        "blocks_gait_kept": int((rec["gait"] == "include").sum()),
+        "blocks_missing": int((b["status"] == "missing").sum()),
+        "trials_recorded": int(rec["n_trials"].sum()),
+        "trials_kept": int(answered),
+        "trials_excluded_with_block": int(excl["n_trials"].sum()),
+        "presentation_artefacts_in_kept_blocks": int(kept["n_presentation_flagged"].sum()),
+        "timeouts_in_kept_blocks": int(kept["n_timeouts"].sum()),
+        "accuracy_kept": round(kept["n_correct"].sum() / answered, 3) if answered else "n/a",
+        "calibrations_recorded": len(cal),
+        "calibrations_kept": int((cal["behaviour"] == "include").sum()),
+        "block_exclusions": _count_labels(excl["label"]),
+        "missing": _count_labels(b.loc[b["status"] == "missing", "label"]),
+    }
+
+
+def summary_rows(units: pd.DataFrame) -> pd.DataFrame:
+    """Counts per participant x condition, per condition and in total."""
+    blocks = units[units["unit"] == "block"]
+    cals = units[units["unit"] == "calibration"]
+    rows = []
+    for (sub, cond), b in blocks.groupby(["participant", "condition"]):
+        c = cals[(cals["participant"] == sub) & (cals["condition"] == cond)]
+        rows.append({"level": "participant", "participant": sub, "condition": cond,
+                     **_summarise(b, c)})
+    for cond, b in blocks.groupby("condition"):
+        rows.append({"level": "condition", "participant": "all", "condition": cond,
+                     **_summarise(b, cals[cals["condition"] == cond])})
+    rows.append({"level": "total", "participant": "all", "condition": "all",
+                 **_summarise(blocks, cals)})
+    return pd.DataFrame(rows)
+
+
+def roster_rows(units: pd.DataFrame, ratings: dict[str, str] | None = None) -> pd.DataFrame:
+    """One row per participant: status (``STATUS_LEVELS``), the experimenter's rating
+    (``ratings``, default ``config.PARTICIPANT_RATINGS``) and the block counts behind them."""
+    ratings = getattr(C, "PARTICIPANT_RATINGS", {}) if ratings is None else ratings
+    blocks = units[units["unit"] == "block"]
+    conds = sorted(blocks["condition"].unique())
+    rows = []
+    for sub, b in blocks.groupby("participant"):
+        rec = b[b["status"] == "recorded"]
+        miss = b[b["status"] == "missing"]
+        kept = rec[rec["behaviour"] == "include"]
+        rating = ratings.get(sub, "unrated")
+        if kept.empty or rating == "not useful":
+            status = "not useful"
+        elif (miss["label"] == "Visit pending").any():
+            status = "pending"
+        elif miss.empty and len(kept) == len(rec):
+            status = "useful"
+        else:
+            status = "partial"
+        row = {"participant": sub, "status": status, "rating": rating,
+               "visits_recorded": int(rec["visit"].nunique())}
+        for cond in conds:
+            row[f"{cond}_recorded"] = int((rec["condition"] == cond).sum())
+            row[f"{cond}_kept"] = int((kept["condition"] == cond).sum())
+        row["block_exclusions"] = _count_labels(rec.loc[rec["behaviour"] == "exclude", "label"])
+        row["missing"] = _count_labels(miss["label"])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _md_table(df: pd.DataFrame, cols: dict[str, str]) -> str:
+    """A GitHub-flavoured Markdown table of ``df[cols]`` under the given headers."""
+    lines = ["| " + " | ".join(cols.values()) + " |",
+             "|" + "|".join("---" for _ in cols) + "|"]
+    for _, r in df.iterrows():
+        cells = []
+        for k in cols:
+            v = r[k]
+            cells.append(f"{v:.1%}" if k == "accuracy_kept" and isinstance(v, float)
+                         else str(v))
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def markdown(units: pd.DataFrame, summary: pd.DataFrame, gate_id: str = "",
+             roster: pd.DataFrame | None = None) -> str:
+    """The overview as a Markdown document."""
+    roster = roster_rows(units) if roster is None else roster
+    roster_cols = {c: h for c, h in (
+        ("participant", "Participant"), ("status", "Status"), ("rating", "Rating"),
+        ("visits_recorded", "Visits"), ("walking_kept", "Walking kept"),
+        ("walking_recorded", "of recorded"), ("standing_kept", "Standing kept"),
+        ("standing_recorded", "of recorded"), ("block_exclusions", "Exclusions"),
+        ("missing", "Missing")) if c in roster.columns}
+    counts = {
+        "participant": "Participant", "condition": "Condition",
+        "blocks_recorded": "Blocks", "blocks_kept": "Kept", "blocks_excluded": "Excl.",
+        "trials_recorded": "Trials", "trials_kept": "Kept (answered)",
+        "trials_excluded_with_block": "Excl. with block",
+        "presentation_artefacts_in_kept_blocks": "Presentation artefacts (kept blocks)",
+        "timeouts_in_kept_blocks": "Timeouts (kept blocks)",
+        "accuracy_kept": "Accuracy (kept)", "block_exclusions": "Exclusion labels",
+    }
+    tot = summary[summary["level"] == "total"].iloc[0]
+    blocks = units[(units["unit"] == "block") & (units["status"] == "recorded")]
+    excl = blocks[blocks["behaviour"] == "exclude"]
+    cal = units[units["unit"] == "calibration"]
+    cal_x = cal[cal["behaviour"] == "exclude"]
+    miss = units[units["status"] == "missing"]
+    n_train = pd.to_numeric(blocks["n_training"], errors="coerce").sum()
+    gait_out = blocks[blocks["gait"] == "exclude"]
+    walk = blocks[blocks["condition"] == "walking"]
+    walk_gait = int((walk["gait"] == "include").sum())
+
+    md = ["# Data quality overview", "",
+          "Generated by `Analysis/report.py` from the exclusion gate "
+          f"(`derivatives/qc/gate.tsv`{', gate ' + gate_id if gate_id else ''}) on every "
+          "pipeline run; do not edit by hand. Counts are for the behaviour scope (the "
+          "analyses of the responses). Trials are main trials; kept trials are the "
+          "answered trials of kept blocks whose presentation was valid (no head-tracking "
+          "artefact around the stimulus; `qc/presentation_flags.tsv`).", "",
+          f"**Overall:** {tot['blocks_kept']}/{tot['blocks_recorded']} blocks and "
+          f"{tot['trials_kept']}/{tot['trials_recorded']} trials kept, accuracy "
+          f"{tot['accuracy_kept']:.1%} on the kept trials; "
+          f"{tot['presentation_artefacts_in_kept_blocks']} trials of kept blocks removed by "
+          "the presentation rule; "
+          f"{tot['calibrations_kept']}/{tot['calibrations_recorded']} calibrations kept; "
+          f"{int(n_train)} training trials not analysed. The gait analyses keep "
+          f"{walk_gait}/{len(walk)} walking blocks: only manual exclusions and the "
+          "frame-rate criterion apply there.", "",
+          "## Participant roster", "",
+          "Status from the gate: **useful** = every planned block recorded and kept; "
+          "**partial** = some lost or a visit cancelled; **pending** = a visit still to "
+          "come; **not useful** = no block kept, or rated so. Rating = the experimenter's "
+          "own (`config.PARTICIPANT_RATINGS`, also in `participants.tsv`); a participant "
+          "rated not useful is left out of every analysis, gait included.", "",
+          _md_table(roster, roster_cols), "",
+          "## By participant and condition", "",
+          _md_table(summary[summary["level"] == "participant"], counts), "",
+          "## By condition", "",
+          _md_table(summary[summary["level"] != "participant"], counts), "",
+          "## Excluded blocks", ""]
+    if excl.empty:
+        md.append("None.")
+    else:
+        e = excl.assign(accuracy=[f"{c / a:.1%}" if a else "n/a"
+                                  for c, a in zip(excl["n_correct"], excl["n_answered"])])
+        md.append(_md_table(e, {"participant": "Participant", "condition": "Condition",
+                                "visit": "Visit", "run": "Run", "accuracy": "Accuracy",
+                                "n_timeouts": "Timeouts", "label": "Label",
+                                "all_labels": "All criteria failed", "gait": "Gait scope"}))
+    md += ["", "## Calibrations", "",
+           f"{len(cal) - len(cal_x)}/{len(cal)} kept for the pooled calibration refit."]
+    if not cal_x.empty:
+        md += ["", _md_table(cal_x, {"participant": "Participant", "condition": "Condition",
+                                     "visit": "Visit", "label": "Label"})]
+    md += ["", "## Missing planned blocks", ""]
+    if miss.empty:
+        md.append("None.")
+    else:
+        m = (miss.groupby(["participant", "condition", "visit", "label"])["run"]
+             .apply(lambda r: ", ".join(f"{int(x):02d}" for x in r)).reset_index())
+        md.append(_md_table(m, {"participant": "Participant", "condition": "Condition",
+                                "visit": "Visit", "run": "Runs", "label": "Label"}))
+    if not gait_out.empty:
+        md += ["", "Excluded from the gait analyses as well: "
+               + ", ".join(gait_out["recording"]) + "."]
+    md += ["", "## Labels", "",
+           _md_table(pd.DataFrame(LEGEND, columns=["label", "unit", "meaning"]),
+                     {"label": "Label", "unit": "Applies to", "meaning": "Meaning"}), ""]
+    return "\n".join(md)
+
+
+def _training_counts() -> dict[str, int]:
+    out = {}
+    for rec in bids_io.find_recordings(include_excluded=True, apply_block_rule=False):
+        ev = bids_io.load_events(rec, presentation_rule=False)
+        if not ev.empty and "is_training" in ev:
+            out[rec.label()] = int((pd.to_numeric(ev["is_training"], errors="coerce") == 1).sum())
+    return out
+
+
+def data_quality_main(quiet: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Write the overview (Markdown + two TSVs) under ``derivatives/summary/``."""
+    gate = bids_io.load_gate()
+    if gate.empty:
+        print("No exclusion gate found. Run the pipeline first.")
+        return pd.DataFrame(), pd.DataFrame()
+    units = unit_rows(gate, _training_counts())
+    summary = summary_rows(units)
+    roster = roster_rows(units)
+    out = bids_io.deriv_dir("summary")
+    units.to_csv(out / "data_quality_units.tsv", sep="\t", index=False, na_rep="n/a")
+    summary.to_csv(out / "data_quality_summary.tsv", sep="\t", index=False, na_rep="n/a")
+    roster.to_csv(out / "participant_roster.tsv", sep="\t", index=False, na_rep="n/a")
+    (out / "data_quality.md").write_text(markdown(units, summary, bids_io.gate_id(), roster),
+                                         encoding="utf-8")
+    if not quiet:
+        tot = summary[summary["level"] == "total"].iloc[0]
+        print(f"  data quality: {tot['blocks_kept']}/{tot['blocks_recorded']} blocks, "
+              f"{tot['trials_kept']}/{tot['trials_recorded']} trials kept; "
+              f"exclusions: {tot['block_exclusions']}")
+        print("  roster: " + "; ".join(f"{n} {s}" for s, n in
+                                       roster["status"].value_counts().items()))
+        print(f"Data quality -> {out / 'data_quality.md'}")
+    return units, summary
 
 
 if __name__ == "__main__":

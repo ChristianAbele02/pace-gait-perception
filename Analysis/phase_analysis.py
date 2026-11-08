@@ -234,7 +234,7 @@ def _spectrum_with_coef(x_pct: np.ndarray, y: np.ndarray,
     """``(R² per frequency, beta)``, with ``beta`` the (nfreq, 3) solution ``[c, a, b]`` of
     ``y ≈ c + a·cos(wx) + b·sin(wx)``.
 
-    The (a, b) pair is the per-participant coefficient used by ``group_agnostic.py``, so
+    The (a, b) pair is the per-participant coefficient used by ``population.py``, so
     the coefficients and the confirmatory R² come from the same computation.
 
     ``w_bin`` (per-bin counts) gives weighted LS and weighted R²,
@@ -316,7 +316,7 @@ def analyse_measure(phase, value, how, nbins=N_BINS, nperm=N_PERM,
     #   * counts: draw a same-size subset without replacement from the onset phase pool,
     #     which keeps any non-uniform target timing.
     # Per shuffle: max R² over the grid (exploratory), R² at 2 and 4 cps (confirmatory),
-    # and the (cos, sin) coefficients at 2 and 4 cps, reused by group_agnostic.py so its
+    # and the (cos, sin) coefficients at 2 and 4 cps, reused by population.py so its
     # null uses the same shuffles.
     null_max = np.empty(nperm)
     null_2 = np.empty(nperm)
@@ -380,7 +380,7 @@ def analyse_measure(phase, value, how, nbins=N_BINS, nperm=N_PERM,
         "preferred_phase_2cps_rad": float(phi_2),
         "r2_at_4cps": float(r2_4), "amp_at_4cps": float(amp_4),
         "preferred_phase_4cps_rad": float(phi_4),
-        # observed and permuted (cos, sin) coefficients for group_agnostic.py (not in JSON)
+        # observed and permuted (cos, sin) coefficients for population.py (not in JSON)
         "coef_2cps": obs_beta[IDX_2CPS, 1:] * coef_norm,
         "coef_4cps": obs_beta[IDX_4CPS, 1:] * coef_norm,
         "null_coef_2cps": null_ab_2 * coef_norm,
@@ -394,21 +394,20 @@ def analyse_measure(phase, value, how, nbins=N_BINS, nperm=N_PERM,
 def continuous_phase(g) -> np.ndarray | None:
     """Continuous stride phase from a gait ``.npz`` for config.PHASE_METHOD, or None.
 
-    "phaser" -> ``stride_phase_phaser`` (phaser.py); otherwise ``stride_phase_cont``
-    (Hilbert), which callers use only when the method is "hilbert".
+    "hilbert" -> ``stride_phase_cont`` (Hilbert). Under "trough" the Hilbert array is
+    still returned; callers use it only when the method is "hilbert".
     """
-    key = ("stride_phase_phaser" if getattr(C, "PHASE_METHOD", "trough") == "phaser"
-           else "stride_phase_cont")
+    key = "stride_phase_cont"
     return g[key] if key in g and np.size(g[key]) else None
 
 
 def _phase_of(times, troughs, step_foot, tg=None, cont_phase=None):
     """Stride phase at event times using config.PHASE_METHOD.
 
-    "hilbert" and "phaser" use the continuous phase from gait.py (fall back to troughs if
-    missing); "trough" uses Davidson's trough interpolation.
+    "hilbert" uses the continuous phase from gait.py (falls back to troughs if missing);
+    "trough" uses Davidson's trough interpolation.
     """
-    if (getattr(C, "PHASE_METHOD", "trough") in ("hilbert", "phaser")
+    if (getattr(C, "PHASE_METHOD", "trough") == "hilbert"
             and tg is not None and cont_phase is not None and np.size(cont_phase)):
         _, p = gait_mod.phase_at_hilbert(times, tg, cont_phase)
         return p
@@ -776,7 +775,7 @@ def _pooled_measures(pools: dict) -> dict:
 
 def subject_walk_label(sub: str, ses: str) -> str:
     """Label of a participant's pooled walking phase result (all walking runs), without a
-    run- entity. Read by ``population.py`` and ``group_agnostic.py``."""
+    run- entity. Read by ``population.py``."""
     return f"{sub}_{ses}_task-{C.TASK_LABEL}_acq-walking"
 
 
@@ -828,7 +827,7 @@ def subject_pooled_analysis(recs) -> None:
                  **{f"{k}_{a}": np.asarray(measures[k][a])
                     for k in measures if measures[k]
                     for a in ("centers", "binned", "freqs", "r2",
-                              # coefficients for group_agnostic.py
+                              # coefficients for population.py
                               "coef_2cps", "coef_4cps",
                               "null_coef_2cps", "null_coef_4cps")})
         flagged = [k for k, m in measures.items() if m["significant"]]
@@ -840,8 +839,7 @@ def pooled_analysis(recs) -> dict | None:
     """Exploratory: test all walking participants' trials pooled.
 
     Not a population test: it ignores between-participant variance, so one participant
-    can drive the result. Population inference is in group_agnostic, common_phase and
-    population.py.
+    can drive the result. Population inference is in population.py.
     """
     pools = {"accuracy": ([], []), "reaction_time": ([], []), "timeouts": ([], [])}
     subs = set()

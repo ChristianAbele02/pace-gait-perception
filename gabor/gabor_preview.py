@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os.path as _osp
 import sys
-sys.path.insert(0, _osp.dirname(_osp.abspath(__file__)))
+sys.path.insert(0, _osp.join(_osp.dirname(_osp.dirname(_osp.abspath(__file__))), "Analysis"))
 
 import numpy as np
 import matplotlib
@@ -36,8 +36,8 @@ import plotstyle as S
 
 S.apply()
 
-# Output folder: <project root>/gabor/
-OUT_DIR = _osp.join(_osp.dirname(_osp.dirname(_osp.abspath(__file__))), "gabor")
+# Output folder: this script's folder (<project root>/gabor/)
+OUT_DIR = _osp.dirname(_osp.abspath(__file__))
 _os.makedirs(OUT_DIR, exist_ok=True)
 
 QUAD_DEG = 19.85                      # visual angle of the full quad (1.0 in UV)

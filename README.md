@@ -128,7 +128,7 @@ PACE tracks the head rigid body only and reconstructs gait from head motion (§8
   Unity plugin (NatNet) for the full 6-DOF head pose.
 - **`rig/ill.py`** — signs (Ed25519) and sends `start` / `stop` commands to the render nodes'
   listener. The signing seed is a secret and never stored in the repository (§5).
-- **Analysis:** Python 3.12, NumPy / SciPy / pandas / statsmodels, NumPyro for the Bayesian
+- **Analysis:** Python 3.12, NumPy / SciPy / pandas, NumPyro for the Bayesian
   models (`Analysis/requirements.txt`).
 
 ---
@@ -161,7 +161,7 @@ PACE/
 │   └── ill.py                     signed start / stop for the render nodes
 ├── Analysis/                      Python pipeline, tests, power analysis, figures
 ├── data/                          BIDS dataset root (only the metadata skeleton is tracked)
-├── gabor/                         stimulus previews (Analysis/gabor_preview.py)
+├── gabor/                         stimulus previews (gabor/gabor_preview.py)
 ├── INSTRUCTIONS.md                operator guide
 └── README.md
 ```
@@ -187,7 +187,7 @@ other. The starting condition comes from a pre-generated **permuted-block alloca
 Permuted blocks keep the standing-first / walking-first split within 2 at any point of
 enrolment without being predictable; the crossover puts each condition once in the early and
 once in the late half of a session, so the threshold contrast is purged of time-on-task
-(`threshold_by_condition._crossover_model`).
+(`conditions._crossover_model`).
 
 <p align="center"><img alt="Session timelines for both allocation arms across two visits" src="Analysis/figures/adopted_design.png" width="100%"></p>
 <p align="center"><sub>Both allocation arms over two visits, to scale in minutes. Each condition is calibrated once per visit and run out; the leading condition swaps between visits.</sub></p>
@@ -205,7 +205,7 @@ converter turns into a `run-` entity, so no block overwrites another.
 Right = `1`), shown for **100 ms** (`taskDuration`). The grating is a Gaussian-windowed Gabor of
 **3 cpd, σ = 0.70°** (Davidson's values; `FollowerPlane` + `GaborShader`). The visible patch is
 cut to ≈ 8.7° (`gaborDiskRadius` = 0.22 on the 0.7 m quad) so it reads as a small patch; the
-spatial frequency and envelope are unchanged. `python Analysis/gabor_preview.py` renders it at
+spatial frequency and envelope are unchanged. `python gabor/gabor_preview.py` renders it at
 true visual angle (previews in `gabor/`).
 
 <p align="center"><img alt="Two consecutive trials on a time axis: stimulus, response window and ISI" src="Analysis/figures/trial_timeline.png" width="92%"></p>
@@ -229,8 +229,9 @@ minimises the expected posterior entropy.
 
 **Slope and lapse are fixed, not estimated live.** A short calibration estimates threshold
 robustly but not slope (Paire et al. 2022). Slope and lapse are instead **checked offline**:
-`Analysis/calibration_refit.py` fits threshold, slope and lapse by maximum likelihood on the
-pooled calibration trials, and `Analysis/threshold_by_condition.py` tests whether the slope
+the calibration refit (`python -m Analysis.calibration refit`) fits threshold, slope and lapse by
+maximum likelihood on the pooled calibration trials, and the H5 threshold analysis
+(`Analysis/conditions.py`) tests whether the slope
 differs between standing and walking (likelihood-ratio test) rather than assuming it does not.
 A simulation at the rig's design (`calibration/figures/calibration_refit_simulation.png`;
 thresholds around 1.2°, 34–66 QUEST+ trials, a catch trial at 12° every ~6 trials, true lapse
@@ -246,7 +247,7 @@ shuffled order. The **final estimate is the pooled posterior** over both tracker
 Calibration stops once the pooled posterior SD ≤ 0.10 log₁₀ (≥ 30 scored trials, ≤ 100 in
 total), with an early abort at 80 trials if the SD is still > 0.18. Tracker agreement is
 logged as a robustness flag. These rules were set and validated by simulation
-(`Analysis/calibration_convergence_sim.py`).
+(`python -m Analysis.calibration convergence`).
 
 **Warm-up and catch trials.** Each calibration opens with 5 warm-up trials on a descending
 ramp (12° → 6°), and every 6th scored trial is followed by an unmistakable 12° catch trial;
@@ -401,10 +402,8 @@ trial counters, presented tilt, direction, response, correctness, posterior mean
 identity columns on every row, and `#` header lines with the final tilts, QUEST+ parameters
 and the convergence and attention verdicts.
 
-```bash
-python Analysis/plot_calibration.py                                   # newest *_calibration*.csv here
-python Analysis/plot_calibration.py p05-v1-b1-t01_calibration_walking.csv --no-show
-```
+After conversion, `python -m Analysis.calibration` draws the convergence figure and the
+reliability verdict of every calibration (`derivatives/calibration/`).
 
 A missed response (2 s window) is logged as a timeout and, in calibration, never fed to QUEST+.
 The analysis treats it the same way: accuracy is the proportion correct of the **answered**
@@ -502,10 +501,10 @@ a 1.10× threshold ratio. The split also buys robustness to attrition: N = 12 st
 
 ```
 raw logs → bidsify → BIDS dataset → calibration → presentation rule + exclusion gate → qc / gait
-→ phase_analysis (per participant) → group_agnostic (CONFIRMATORY population test)
-→ common_phase / glmm / bayes_glmm / population / threshold_phase (secondary)
-→ clocktime_control (stride vs clock control) → conditions / threshold_by_condition
-→ calibration_transfer / calibration_cost / shared_power (operating point and power)
+→ tables (one row per trial, one per step) → phase_analysis (per participant)
+→ population (CONFIRMATORY phase-agnostic test; common phase, prevalence)
+→ bayes_glmm / threshold_phase (secondary) → clocktime_control (stride vs clock control)
+→ conditions (standing vs walking, H5, calibration transfer) → power (operating point and power)
 → exploratory modules → report (HTML summary)
 ```
 
@@ -513,7 +512,7 @@ raw logs → bidsify → BIDS dataset → calibration → presentation rule + ex
 pip install -r Analysis/requirements.txt
 python -m Analysis.simulate_participants --n 8 --keep   # synthetic participants, whole pipeline (no data needed)
 python -m Analysis.run_pipeline                         # every stage, on data/ (needs real logs in data/)
-python -m pytest Analysis/tests -q                      # inject-and-recover validation suite
+python -m pytest Analysis/tests -q                      # 112 inject-and-recover validation tests
 ```
 
 Every block becomes its own BIDS recording through a **`run-` entity**, and all analyses
@@ -525,44 +524,41 @@ the answered trials: a timeout is a missing response, not a wrong one), RT and t
 rate are binned over the stride and fitted with a Fourier series; the confirmatory frequencies are
 **2 and 4 cycles per stride** (Holm), where Davidson's responders peak, and significance comes
 from 1000 trial-level permutations. The **confirmatory population test**
-(`group_agnostic.py`) sums each participant's squared, studentised Fourier coefficient against
+(`population.py`) sums each participant's squared, studentised Fourier coefficient against
 the pooled permutation null; it is rotation-invariant per participant, so it detects
 oscillation at whatever phase each person has. Secondary routes: a Hotelling T² for a common
-phase (`common_phase.py`), Bayesian mixed models with a standing control on a virtual stride
-clock (`bayes_glmm.py`), a descriptive GLMM, and Bayesian prevalence (Ince et al. 2022)
+phase (`population.py`), Bayesian mixed models with a standing control on a virtual stride
+clock (`bayes_glmm.py`), and Bayesian prevalence (Ince et al. 2022)
 de-biased by measured detection power. A **clock-time control** folds onsets on fixed temporal
 periods instead of the stride, to rule out an effect locked to time rather than to gait.
 
-**Long tables for analyses outside the pipeline:** `trial_table.py` writes every trial
+**Long tables for analyses outside the pipeline:** `tables.py` writes every trial
 (design, response, RT validity, stride phase and stance foot at onset, gate decisions) and
-`step_table.py` every walking step (duration, stance foot, sway and bob), joinable on
+every walking step (duration, stance foot, sway and bob), joinable on
 `(recording, step)`.
 
 **The operating point.** Each block runs at the threshold its calibration measured.
-`calibration_transfer.py` checks whether the blocks land at the intended 75 %,
-`calibration_cost.py` simulates what the calibration error costs in power, and
+The calibration transfer (`conditions.py`) checks whether the blocks land at the intended
+75 %, the calibration cost (`power.py`) simulates what the calibration error costs in power, and
 `threshold_phase.py` repeats the stride-phase test on the threshold scale, weighting each
-trial by the information it carries about a threshold shift. `shared_power.py` gives the
+trial by the information it carries about a threshold shift. `power.py` also gives the
 power for an oscillation shared by all participants, the kind a group-average curve shows.
 
 **Further analyses, all exploratory:**
 
-- **Stance foot and response direction** (`stance_foot.py`): the 2/4 cps test is exactly
+- **Stance foot and response direction** (`response_bias.py`): the 2/4 cps test is exactly
   invariant to which foot is down, so foot labels matter only for the odd harmonics and for
   whether the answer leans towards the stance side.
-- **Sensitivity versus criterion** (`sdt_phase.py`), at 2 and 4 cps and at the stride rate.
-- **Head roll and the response** (`roll_bias.py`): the Gabor follows the head's position but
+- **Sensitivity versus criterion** (`response_bias.py`), at 2 and 4 cps and at the stride rate.
+- **Head roll and the response** (`response_bias.py`): the Gabor follows the head's position but
   not its rotation, so a roll tilts it on the retina by about the size of near-threshold
   tilts; the test asks whether that shifts the left/right answer.
-- **When the presses happen** (`press_phase.py`), against RTs shuffled within blocks, and
-  **whether accuracy follows the phase at the press** rather than at onset
-  (`press_accuracy.py`; the trial-level model at the press is `bayes_glmm --lock press`).
+- **When the presses happen** (`press_phase.py`), against RTs shuffled within blocks.
 - **The group-average-curve analysis** common in the walking literature (`group_curve.py`),
   run on the same trials and calibrated on null versions of them, so its verdict and its
   false-positive rate can be set beside this pipeline's tests.
-- Onset versus response locus, a cyclic GAM and an EZ-diffusion decomposition.
-- **Five analyses of the walking itself:** gait reset by task events, head stabilisation,
-  head kinematics, stride-to-stride dynamics and stride-phase methods. A rig check
+- **Four analyses of the walking itself** (`head_motion.py`, `gait_dynamics.py`): gait reset
+  by task events, head stabilisation, head kinematics and stride-to-stride dynamics. A rig check
   (`rig_check.py`, run once per rig) measures the sign conventions of left and right and of
   head roll, pitch and yaw that these and the stance-foot analyses rely on.
 
@@ -580,8 +576,8 @@ unanswered, and all of a participant's blocks in a condition whose pooled answer
 not above chance (one block alone is too small to judge). Every stage prints its N and logs it to `qc/gate_ledger.tsv`. Below the
 block level, a trial is dropped from every trial-based analysis when the head tracking,
 which drives the CAVE perspective, froze, jumped or dropped out from 0.3 s before its onset
-to 0.1 s after the stimulus went off (`presentation.py`); the gate's criteria use the
-remaining trials. `python -m Analysis.presentation_comparison` reruns the pipeline without
+to 0.1 s after the stimulus went off (`exclusion.py`); the gate's criteria use the
+remaining trials. `python -m Analysis.exclusion compare` reruns the pipeline without
 this rule and writes the comparison to `derivatives/sensitivity/presentation_rule/`.
 
 ---

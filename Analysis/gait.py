@@ -23,7 +23,7 @@ Foot identity therefore comes from lateral sway, which oscillates once per strid
 head and trunk shift toward the stance limb (:func:`label_steps`). The per-step evidence
 is decoded under an alternation constraint, head roll serves as an independent check,
 and the mapping to anatomical left/right requires ``config.LATERAL_SIGN_VERIFIED``. Used
-by ``stance_foot.py``.
+by ``response_bias.py``.
 
 Usage::
 
@@ -47,14 +47,12 @@ try:
     from . import config as C
     from . import bids_io
     from . import clean
-    from . import phaser
     from . import plotstyle as S
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import config as C
     import bids_io
     import clean
-    import phaser
     import plotstyle as S
 
 S.apply()
@@ -219,8 +217,6 @@ class GaitResult:
     raw_segment_samples: int | None = None
     hilbert_phase_source: str | None = None    # 'lateral' or 'vertical'
     hilbert_trough_phase_corr: float | None = None  # Hilbert vs trough phase agreement
-    phaser_trough_phase_corr: float | None = None   # multi-channel vs trough phase agreement
-    phaser_channels: dict | None = None        # per-channel weight and concentration (phaser.py)
     # --- spike cleaning (before resampling and band-pass) ---
     clean_flagged_pct: float | None = None     # % vertical samples flagged
     clean_excised_pct: float | None = None     # % excised (dropouts, not interpolated)
@@ -241,7 +237,6 @@ class GaitResult:
     stride_template_sd: np.ndarray = None
     stride_durations: np.ndarray = None
     stride_phase_cont: np.ndarray = None  # Hilbert stride phase (rad) on t_grid (b3)
-    stride_phase_phaser: np.ndarray = None  # multi-channel stride phase (rad) on t_grid
 
     def summary(self) -> dict:
         """Scalar fields for JSON (arrays dropped)."""
@@ -748,21 +743,6 @@ def extract_gait(rec) -> GaitResult:
             b = np.exp(1j * 2 * np.pi * ps_hilb[ok] / 100.0)
             h_corr = round(float(np.abs(np.mean(a * np.conj(b)))), 3)  # 0..1
 
-    # Multi-channel stride phase (phaser.py); used if config.PHASE_METHOD = "phaser".
-    ph_phase, ph_info = phaser.stride_phase(
-        tg, {"lateral": xf, "roll": roll_f}, {"vertical": yf},
-        ~_in_gaps(tg, gaps), troughs, step_foot)
-    p_corr = None
-    if troughs.size >= 4 and np.isfinite(ph_phase).any():
-        mids = 0.5 * (troughs[:-1] + troughs[1:])
-        _, ps_trough = phase_at(mids, troughs, step_foot)
-        _, ps_ph = phase_at_hilbert(mids, tg, ph_phase)
-        ok = np.isfinite(ps_trough) & np.isfinite(ps_ph)
-        if ok.sum() >= 4:
-            a = np.exp(1j * 2 * np.pi * ps_trough[ok] / 100.0)
-            b = np.exp(1j * 2 * np.pi * ps_ph[ok] / 100.0)
-            p_corr = round(float(np.abs(np.mean(a * np.conj(b)))), 3)
-
     res = GaitResult(
         recording=rec.label(), walking=is_walking,
         dominant_freq_hz=round(dom, 3) if dom else None,
@@ -786,7 +766,6 @@ def extract_gait(rec) -> GaitResult:
         effective_fs_hz=eff_fs, dropped_frame_pct=drop_pct,
         raw_segment_samples=int(tt.size),
         hilbert_phase_source=hsource, hilbert_trough_phase_corr=h_corr,
-        phaser_trough_phase_corr=p_corr, phaser_channels=ph_info.get("channels"),
         clean_flagged_pct=yci.get("pct_flagged"),
         clean_excised_pct=(round(100.0 * yci["n_excised"] / yci["n"], 2)
                            if yci.get("n") else None),
@@ -798,7 +777,6 @@ def extract_gait(rec) -> GaitResult:
         trough_times=troughs, step_foot=step_foot, step_margin=lab.get("step_margin"),
         stride_template=tmpl, stride_template_sd=tmpl_sd,
         stride_durations=stride_int, stride_phase_cont=cont_phase,
-        stride_phase_phaser=ph_phase,
     )
     return res
 
@@ -999,9 +977,7 @@ def gait_recording(rec) -> GaitResult:
                  roll_filt=res.roll_filt if res.roll_filt is not None else [],
                  stride_template=res.stride_template if res.stride_template is not None else [],
                  stride_durations=res.stride_durations if res.stride_durations is not None else [],
-                 stride_phase_cont=res.stride_phase_cont if res.stride_phase_cont is not None else [],
-                 stride_phase_phaser=(res.stride_phase_phaser
-                                      if res.stride_phase_phaser is not None else []))
+                 stride_phase_cont=res.stride_phase_cont if res.stride_phase_cont is not None else [])
         _figure(rec, res, events, bids_io.fig_dir("gait", rec.sub, rec.ses) / f"{rec.label()}_gait.png")
     return res
 

@@ -130,7 +130,7 @@ def save(fig, name: str) -> None:
 
 
 # --- Gabor stimulus, from the shader -------------------------------------------------
-# Values mirror FollowerPlane / GaborShader, via Analysis/gabor_preview.py.
+# Values mirror FollowerPlane / GaborShader, via gabor/gabor_preview.py.
 GABOR_FREQ = 59.6              # cycles across the quad (= 3 cpd at 19.85 deg)
 GABOR_SIGMA = 0.0353           # Gaussian SD in quad units (= 0.70 deg)
 GABOR_DISK = 0.22              # FollowerPlane.gaborDiskRadius, overriding the shader's 0.151 (~8.7 deg patch)

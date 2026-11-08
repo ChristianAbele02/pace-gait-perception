@@ -62,8 +62,8 @@ vector PDF. **Submit the PDF.**
 > magnitude is the phase coherence R = 0.33.
 > **(B)** Population power against sample size at the adopted 1440 walking trials per
 > participant. "Phase-agnostic" is the confirmatory statistic Σ|zᵢ|²/sᵢ² against its null
-> (`Analysis/group_agnostic.py`); "common-phase" is the one-sample Hotelling T² on the
-> mean coefficient (`Analysis/common_phase.py`). Both are Holm-corrected over 2 and 4 cps,
+> (`Analysis/population.py`); "common-phase" is the one-sample Hotelling T² on the
+> mean coefficient (`Analysis/population.py`). Both are Holm-corrected over 2 and 4 cps,
 > with 4000 simulated studies per point and 95 % Monte-Carlo bands. Vector-averaging
 > coefficients that point in different directions cancels most of the effect, so at
 > N = 12 the two tests reach 91 % and 15 %. The shaded band is the planned recruitment
@@ -100,7 +100,7 @@ vector PDF. **Submit the PDF.**
 ## Figure 6 — One visit or two
 
 > **Figure 6. Why the design uses two visits.** Population power and minimum detectable
-> effect of the confirmatory phase-agnostic test (`Analysis/group_agnostic.py`:
+> effect of the confirmatory phase-agnostic test (`Analysis/population.py`:
 > Σ|zᵢ|²/sᵢ² at 2 and 4 cps, Holm-corrected over the pair). The adopted two-visit design
 > (1440 walking trials per participant, eight blocks over two ~80 min visits) is compared
 > with the single-visit alternative a ~90 min session can hold (810 trials, four to five

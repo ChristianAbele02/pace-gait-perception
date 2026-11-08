@@ -32,7 +32,7 @@ What differs from our tests, and what the calibration measures:
 * The group curve can only show a modulation that participants share in phase;
   idiosyncratic phases cancel in the average. Our confirmatory ``S`` asks whether each
   participant oscillates at their own phase; the common-phase question is
-  ``common_phase``'s Hotelling T^2.
+  ``population``'s Hotelling T^2.
 * The null resamples bins of the averaged curve, not trials, so it carries no
   information about how many trials each bin holds.
 * Each of 100 frequencies is tested at 5 % without correction, and an 11-frequency window

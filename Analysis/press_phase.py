@@ -1,9 +1,8 @@
 """Exploratory: are button presses timed by the stride?
 
 During walking, motor output is entrained to the gait: in Davidson et al. (2024) presses
-to visual targets clustered at a particular point of the step. ``onset_response.py``
-compares where accuracy and response emission peak, both referenced to target onset.
-This module asks the motor question directly: do the presses themselves cluster at a
+to visual targets clustered at a particular point of the step. This module asks the
+motor question directly: do the presses themselves cluster at a
 stride phase, beyond what the timing of the targets and the spread of reaction times
 produce?
 
@@ -21,8 +20,8 @@ Statistic: the Fourier coefficient of the press phases at k cycles per stride,
 clustering onsets and RTs produce by themselves is removed. ``2 |z_k|`` is the depth of
 the press-density modulation as a fraction of its mean. Per participant: the 2 and 4 cps
 tests, Holm over the pair, and a separate 1 cps test. Population: the phase-agnostic
-``S`` of ``group_agnostic.agnostic_test`` and the common-phase Hotelling T2 of
-``common_phase.hotelling_t2``, each Holm over 2 and 4 cps. At 2 and 4 cps the stride
+``S`` of ``population.agnostic_test`` and the common-phase Hotelling T2 of
+``population.hotelling_t2``, each Holm over 2 and 4 cps. At 2 and 4 cps the stride
 origin does not depend on the foot labels, so a common phase is meaningful across
 participants.
 
@@ -48,17 +47,15 @@ import numpy as np
 
 try:
     from . import bids_io
-    from . import common_phase as cph
+    from . import population
     from . import config as C
-    from . import group_agnostic as ga
     from . import phase_analysis as pa
     from . import plotstyle as S
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bids_io
-    import common_phase as cph
+    import population
     import config as C
-    import group_agnostic as ga
     import phase_analysis as pa
     import plotstyle as S
 
@@ -185,7 +182,7 @@ def population_test(rows: list[dict]) -> dict:
         obs = np.array([r[key]["coef"] for r in rows], float)
         nper = min(r[key]["null_coef"].shape[0] for r in rows)
         null = np.stack([r[key]["null_coef"][:nper] for r in rows])
-        out[key] = {"agnostic": ga.agnostic_test(obs, null), "hotelling": cph.hotelling_t2(obs),
+        out[key] = {"agnostic": population.agnostic_test(obs, null), "hotelling": population.hotelling_t2(obs),
                     "n_significant_participants": int(sum(
                         r[key].get("p_holm", r[key]["p"]) < ALPHA for r in rows))}
     for test in ("agnostic", "hotelling"):
@@ -223,7 +220,7 @@ def _figure(rows: list[dict], pop: dict, out: Path) -> None:
     ax[1].scatter(Z[:, 0], Z[:, 1], c=cols, s=28, zorder=3)
     mu = Z.mean(0)
     ax[1].plot(*mu, "x", color=S.INK, ms=9, mew=2)
-    ell = cph._ellipse(np.cov(Z, rowvar=False), mu, Z.shape[0])
+    ell = population._ellipse(np.cov(Z, rowvar=False), mu, Z.shape[0])
     if ell is not None:
         ax[1].plot(ell[:, 0], ell[:, 1], color=S.INK, ls="--", lw=1.0)
     ax[1].axhline(0, color=S.GREY, lw=0.7); ax[1].axvline(0, color=S.GREY, lw=0.7)

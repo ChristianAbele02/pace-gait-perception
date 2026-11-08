@@ -8,9 +8,9 @@ and applies the pipeline's estimators:
 3. per participant: weighted R2 at 2 and 4 cps against 1000 trial-level permutations,
    Holm over the pair .................................... ``phase_analysis.analyse_measure``
 4. population, confirmatory: ``S = sum_i |z_i|^2 / s_i^2`` per frequency, Holm
-   ....................................................... ``group_agnostic.agnostic_test``
+   ....................................................... ``population.agnostic_test``
 5. population, secondary: Hotelling T2 on the (cos, sin) pairs, Holm
-   ....................................................... ``common_phase.hotelling_t2``
+   ....................................................... ``population.hotelling_t2``
 
 ``validate`` checks each step against those functions. Three exact shortcuts keep it fast:
 
@@ -233,12 +233,12 @@ def draw_coefficients(rng, shape, scale=1.0, prevalence=None) -> np.ndarray:
 
 def hotelling_p(z) -> np.ndarray:
     """Batched one-sample Hotelling T2 p-value of rows ``(..., N, 2)`` against the origin,
-    real or complex (``a + ib`` as ``(a, b)``); as ``common_phase.hotelling_t2``."""
+    real or complex (``a + ib`` as ``(a, b)``); as ``population.hotelling_t2``."""
     z = np.asarray(z)
     if np.iscomplexobj(z):
         z = np.stack([z.real, z.imag], -1)
     n = z.shape[-2]
-    if n < 4:                                   # common_phase.MIN_N
+    if n < 4:                                   # population.MIN_N
         return np.ones(z.shape[:-2])
     mu = z.mean(-2)
     dev = z - mu[..., None, :]
@@ -304,7 +304,7 @@ def tilt_for(pc, alpha):
 
 def fit_thresholds(tilts, n, hits) -> np.ndarray:
     """Fixed-slope Weibull ML 75 % thresholds (estimator of
-    ``threshold_by_condition.fit_alpha``) for many datasets: grid search over log alpha,
+    ``conditions.fit_alpha``) for many datasets: grid search over log alpha,
     refined by a parabola."""
     u = (tilts[None] / np.exp(LOG_ALPHA_GRID)[:, None]) ** BETA
     p = np.clip(GUESS + (1 - GUESS - LAPSE) * -np.expm1(-u), 1e-6, 1 - 1e-6)
@@ -453,7 +453,7 @@ def tradeoff(nsim=4000, nnull=10000, nsim_threshold=4000, nsim_h2=2000) -> None:
                           "per participant (power.population_power, Holm over 2 and 4 cps).",
                  "n_sim": nsim, "walking_trials": walking, "walking_blocks": blocks(walking), "power": gain},
         "cost_threshold": {"_what": "SD of the fixed-slope Weibull ML 75 % threshold (the estimator "
-                                    "threshold_by_condition uses) vs standing trials, levels at the rig's "
+                                    "conditions.py uses) vs standing trials, levels at the rig's "
                                     "65/75/85 % points mixed 0.05/0.85/0.10.",
                            "n_sim": nsim_threshold, "true_threshold_deg": true, "standing_trials": standing,
                            "standing_blocks": blocks(standing), "sd_deg": [round(s, 3) for s in sd],
@@ -514,10 +514,9 @@ def checks() -> None:
 
 def validate() -> None:
     """Check each estimator step against the pipeline function."""
-    import common_phase as cph
-    import group_agnostic as ga
+    import population
     import phase_analysis as pa
-    import threshold_by_condition as tbc
+    import conditions as tbc
 
     rng = np.random.default_rng(7)
     names = np.array(list(LEVELS))
@@ -561,8 +560,8 @@ def validate() -> None:
     print(f"per-participant p-values vs analyse_measure on shared permutations: {agree}/{n} identical")
 
     z = rng.normal(0.2, 1.0, (60, 15, 2))
-    print("Hotelling vs common_phase.hotelling_t2: max |diff| "
-          f"{max(abs(hotelling_p(x) - cph.hotelling_t2(x)['p_value']) for x in z):.1e}")
+    print("Hotelling vs population.hotelling_t2: max |diff| "
+          f"{max(abs(hotelling_p(x) - population.hotelling_t2(x)['p_value']) for x in z):.1e}")
 
     t = simulate_tables(rng, draw_coefficients(rng, (1,)), ADOPTED_TRIALS)
     est = estimate(t)
@@ -577,11 +576,11 @@ def validate() -> None:
         t = simulate_tables(rng, draw_coefficients(rng, (npp,)), ADOPTED_TRIALS)
         est = estimate(t)
         null_z = np.stack([permuted_z(t, est, row, N_PERM) for row in range(npp)])
-        p = [ga.agnostic_test(np.stack([est.z[:, f].real, est.z[:, f].imag], 1),
+        p = [population.agnostic_test(np.stack([est.z[:, f].real, est.z[:, f].imag], 1),
                               np.stack([null_z[..., f].real, null_z[..., f].imag], 2))["p_value"] for f in range(2)]
         hits += min(p) < ALPHA_ANY
     print(f"population power, {npp} x {ADOPTED_TRIALS}: simulated null {100 * mc:.1f} % vs "
-          f"group_agnostic.agnostic_test on real permutations {100 * hits / nsim:.1f} % "
+          f"population.agnostic_test on real permutations {100 * hits / nsim:.1f} % "
           f"(MC SE ~{100 * mc_se(mc, nsim):.0f})")
 
     gap = 0.0
@@ -592,7 +591,7 @@ def validate() -> None:
         n = np.array([[np.sum(tilt == x) for x in levels]])
         h = np.array([[hit[tilt == x].sum() for x in levels]])
         gap = max(gap, abs(fit_thresholds(levels, n, h)[0] / tbc.fit_alpha(tilt, hit)["thresh75_deg"] - 1))
-    print(f"threshold ML vs threshold_by_condition.fit_alpha: max relative diff {gap:.1e}")
+    print(f"threshold ML vs conditions.fit_alpha: max relative diff {gap:.1e}")
 
 
 TASKS = {"validate": validate, "checks": checks, "sweep": sweep, "population": population,

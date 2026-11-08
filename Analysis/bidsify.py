@@ -826,14 +826,17 @@ def _scan_condition(name: str) -> str:
 
 
 def _exclusion_reason(name: str, bids_dir: Path | None = None) -> str:
-    """Reason from ``config.EXCLUDED_RECORDINGS``, or n/a.
+    """Reason from ``config.EXCLUDED_RECORDINGS`` or from the participant's "not useful"
+    rating (``bids_io.excluded_participants``), or n/a.
 
     Automatic rule verdicts are in ``derivatives/qc/gate.tsv``, which the raw dataset does
     not depend on. Keys are recording labels (file name without ``tracksys-`` and suffix).
     """
     label = re.sub(r"_tracksys-[a-zA-Z0-9]+", "", name).removesuffix("_motion.tsv")
     reason = bids_io.excluded_recordings(bids_dir, apply_block_rule=False).get(label)
-    return reason.removeprefix("manual: ") if reason else "n/a"
+    if reason:
+        return reason.removeprefix("manual: ")
+    return bids_io.excluded_participants().get(name.split("_", 1)[0], "n/a")
 
 
 def _write_scans_tsv(bids_dir: Path, sub: str, sessions: list[dict] | None = None) -> None:
@@ -1126,6 +1129,8 @@ def _write_dataset_level(bids_dir: Path, participants: list[dict]) -> None:
     if not pdf.empty:
         order = [c for c in _PARTICIPANT_COLUMNS if c in pdf.columns]
         pdf = pdf[order + [c for c in pdf.columns if c not in order]]
+        ratings = getattr(C, "PARTICIPANT_RATINGS", {})
+        pdf["data_quality_rating"] = [ratings.get(p, "unrated") for p in pdf["participant_id"]]
     pdf.to_csv(bids_dir / "participants.tsv", sep="\t", index=False, na_rep="n/a")
     _dump_json(bids_dir / "participants.json", {
         "participant_id": {"Description": "Participant identifier (p## on the rig)."},
@@ -1152,6 +1157,20 @@ def _write_dataset_level(bids_dir: Path, participants: list[dict]) -> None:
                            "Units": "degree"},
         "hard_angle_deg": {"Description": "Same as hard_walking_deg; kept for older scripts.",
                            "Units": "degree"},
+        "data_quality_rating": {
+            "Description": "The experimenter's overall rating of the participant's data "
+                           "(config.PARTICIPANT_RATINGS). A participant rated 'not useful' "
+                           "is left out of every analysis (exclusion_reason in scans.tsv); "
+                           "the others are judged per block by the gate "
+                           "(derivatives/qc/gate.tsv). "
+                           "derivatives/summary/participant_roster.tsv gives the "
+                           "useful / partial / pending / not useful status.",
+            "Levels": {"very good": "clean data, all blocks usable",
+                       "good": "usable, with minor problems (response bias, an off-target "
+                               "calibration, a lost block)",
+                       "weak": "usable, but low accuracy or much of the data lost",
+                       "not useful": "too little usable behavioural data to count",
+                       "unrated": "not yet rated"}},
     })
 
 

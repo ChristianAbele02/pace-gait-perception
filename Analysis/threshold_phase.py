@@ -5,7 +5,7 @@ oscillation of the threshold moves accuracy depends on where a trial sits on the
 psychometric function. A threshold modulation by a factor ``exp(theta)`` moves accuracy
 by ``dP/dln(alpha) * theta``. That slope is largest near 84 % correct and falls to zero at
 chance and at ceiling. Each block presents its tilts at the calibrated threshold, and the
-calibration does not always carry over (``calibration_transfer.py``). So the blocks sit
+calibration does not always carry over (``conditions.py``). So the blocks sit
 at different points of their participant's function, and their trials carry different
 amounts of information about the same threshold modulation.
 
@@ -30,7 +30,7 @@ This stage measures that and runs the stride-phase test on the threshold scale:
 4. Threshold units. ``E[v | phase] = -w * theta(phase)``, so ``theta = -z / mean(w)``
    turns a fitted coefficient ``z`` into a modulation of ln threshold. ``100 |theta|`` is
    the peak modulation in percent of the threshold.
-5. Population. The studentised phase-agnostic sum of ``group_agnostic.agnostic_test``
+5. Population. The studentised phase-agnostic sum of ``population.agnostic_test``
    on the weighted coefficients and their permutations, Holm over 2 and 4 cps.
 
 Role: secondary. The confirmatory outcome stays accuracy (``config.PRIMARY_MEASURE``).
@@ -38,7 +38,7 @@ This stage asks the same question on the threshold scale, which (a) does not dep
 the operating point each block happened to run at, (b) states the effect as a threshold
 modulation that compares across participants and studies, and (c) shows how much
 information the blocks carried. Weighting cannot restore information a block at chance
-or at ceiling never collected. What that loss costs in power is ``calibration_cost.py``.
+or at ceiling never collected. What that loss costs in power is ``power.py``.
 
 ``P`` is clipped to ``[P_MIN, P_MAX]`` for the weights. Under the fixed lapse a block at
 ceiling would otherwise get weight zero, although a participant with a smaller lapse
@@ -71,30 +71,28 @@ import pandas as pd
 
 try:
     from . import bids_io
-    from . import calibration_refit as cref
-    from . import calibration_transfer as ct
+    from . import calibration as cref
+    from . import conditions
     from . import config as C
     from . import gait as gait_mod
-    from . import group_agnostic as ga
+    from . import population as ga
     from . import phase_analysis as pa
     from . import plotstyle as S
-    from . import threshold_by_condition as tbc
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import bids_io
-    import calibration_refit as cref
-    import calibration_transfer as ct
+    import calibration as cref
+    import conditions
     import config as C
     import gait as gait_mod
-    import group_agnostic as ga
+    import population as ga
     import phase_analysis as pa
     import plotstyle as S
-    import threshold_by_condition as tbc
 
 S.apply()
 
-GUESS, LAPSE, BETA = tbc.GUESS, tbc.LAPSE_FIX, tbc.BETA_FIX
-DESIGN_PC = tbc.TARGET                 # the THR level's planned accuracy
+GUESS, LAPSE, BETA = conditions.GUESS, conditions.LAPSE_FIX, conditions.BETA_FIX
+DESIGN_PC = conditions.THRESHOLD_TARGET                 # the THR level's planned accuracy
 P_MIN, P_MAX = 0.55, 0.92              # range of P used for the weights
 FREQS = ga.FREQS
 ALPHA = 0.05
@@ -142,7 +140,7 @@ def expected_accuracy(tilt, alpha):
 
 def block_alpha(tilt, correct) -> float:
     """Weibull threshold of one block's answered trials, slope/lapse/guess fixed (grid ML)."""
-    return float(np.exp(ct.GRID[int(np.argmin(ct._nll_grid(tilt, correct)))]))
+    return float(np.exp(conditions.GRID[int(np.argmin(conditions._nll_grid(tilt, correct)))]))
 
 
 def weighted_values(y, cell, p_hat) -> np.ndarray:
@@ -214,7 +212,7 @@ def _block_trials(rec) -> tuple[pd.DataFrame | None, dict | None]:
             "n_trials": int(len(out)),
             "thr_accuracy": round(float(y[thr].mean()), 4) if thr.any() else np.nan,
             "thr_tilt_deg": round(float(np.median(tilt[thr])), 4) if thr.any() else np.nan,
-            "block_t75_deg": round(float(ct._to_t75(alpha)), 4),
+            "block_t75_deg": round(float(conditions._to_t75(alpha)), 4),
             "information_retained": round(float(out["eta"].mean()), 4) if len(out) else np.nan}
     return out, info
 

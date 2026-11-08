@@ -383,7 +383,7 @@ From the repo root:
 
 ```bash
 python -m Analysis.bidsify        # loose CSVs -> BIDS under data/, raw archived to sourcedata/
-python -m Analysis.run_pipeline   # QC, gait, stride phase, GLMM, prevalence, report
+python -m Analysis.run_pipeline   # QC, gait, stride phase, population tests, report
 ```
 
 **How multi-block data is stored.** Each block becomes its own BIDS recording, identified by a

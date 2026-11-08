@@ -1,10 +1,11 @@
-"""Run the full analysis pipeline.
+"""Run the full analysis pipeline, stage by stage in dependency order.
 
-    python -m Analysis.run_pipeline          # bidsify -> calibration -> gate -> qc -> gait -> ...
-    python Analysis/run_pipeline.py --skip-bids
-    python Analysis/run_pipeline.py --only qc
+    python -m Analysis.run_pipeline              # all stages
+    python -m Analysis.run_pipeline --skip-bids  # reuse the BIDS dataset
+    python -m Analysis.run_pipeline --only qc    # one stage
+    python -m Analysis.run_pipeline --no-cache   # recompute everything
 
-Each stage can also be run as its own script.
+Each stage is also a module that runs on its own (``python -m Analysis.<module>``).
 """
 from __future__ import annotations
 
@@ -15,38 +16,55 @@ from collections import Counter
 from pathlib import Path
 
 try:
-    from . import (bidsify, calibration, calibration_refit, qc, block_rules, gait, phase_analysis,
-                   glmm, population, group_agnostic, clocktime_control, conditions,
-                   threshold_by_condition, report, descriptive, onset_response,
-                   gam_phase, ddm_phase, prevalence_planning, stance_foot, sdt_phase,
-                   common_phase, head_stability, gait_dynamics, gait_prc,
-                   gait_phase_methods, calibration_transfer, bayes_glmm, bids_io,
-                   trial_table, step_table, stage_cache, presentation, threshold_phase,
-                   calibration_cost, head_kinematics, roll_bias, press_phase, shared_power,
-                   press_accuracy, group_curve, config as C)
+    from . import (bayes_glmm, bids_io, bidsify, calibration, clocktime_control, conditions,
+                   descriptive, exclusion, gait, gait_dynamics, group_curve, head_motion,
+                   phase_analysis, population, power, press_phase, qc, report, response_bias,
+                   stage_cache, tables, threshold_phase, config as C)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import bidsify, calibration, calibration_refit, qc, block_rules, gait, phase_analysis
-    import glmm, population, group_agnostic, clocktime_control, conditions
-    import threshold_by_condition, report, descriptive, onset_response
-    import gam_phase, ddm_phase, prevalence_planning, stance_foot, sdt_phase
-    import common_phase
-    import head_stability, gait_dynamics, gait_prc, gait_phase_methods
-    import calibration_transfer, bayes_glmm, stage_cache
-    import trial_table, step_table, presentation
-    import threshold_phase, calibration_cost
-    import head_kinematics, roll_bias, press_phase, shared_power, press_accuracy, group_curve
-    import bids_io
+    import bayes_glmm, bids_io, bidsify, calibration, clocktime_control, conditions
+    import descriptive, exclusion, gait, gait_dynamics, group_curve, head_motion
+    import phase_analysis, population, power, press_phase, qc, report, response_bias
+    import stage_cache, tables, threshold_phase
     import config as C
 
-STAGES = ["bids", "calibration", "gate", "calib_refit", "qc", "gait", "trial_table",
-          "step_table", "phase",
-          "agnostic", "common_phase", "glmm", "bayes_glmm", "population", "planning", "clocktime",
-          "conditions",
-          "threshold", "calib_transfer", "threshold_phase", "calib_cost", "shared_power", "descriptive",
-          "onset_response", "press_phase", "press_accuracy", "group_curve", "gam", "ddm", "stance_foot", "sdt", "roll_bias",
-          "phase_methods", "head_stability", "head_kinematics", "gait_dynamics", "gait_prc",
-          "report"]
+# (stage, title, function), in dependency order. bids_io.load_gate and the presentation
+# flags also rebuild themselves whenever they are stale, e.g. for a stage run with --only.
+PIPELINE = [
+    ("bids", "BIDS conversion", lambda: bidsify.convert_all()),
+    ("calibration", "Calibration check and figures", lambda: calibration.check_main()),
+    # Straight after the calibration verdicts it uses, before any analysis. The
+    # presentation flags come first: the block rule is judged on the trials they keep.
+    ("gate", "Presentation rule + exclusion gate (derivatives/qc/)", lambda: exclusion.main()),
+    ("calib_refit", "Calibration slope/lapse refit", lambda: calibration.refit_main()),
+    ("qc", "Quality control", lambda: qc.main()),
+    ("gait", "Gait extraction and stride phase", lambda: gait.main()),
+    ("tables", "Trial and step tables", lambda: tables.main()),
+    ("phase", "Stride-phase modulation per participant", lambda: phase_analysis.main()),
+    ("population", "Population tests: CONFIRMATORY phase-agnostic, common phase, prevalence",
+     lambda: population.main()),
+    ("bayes_glmm", "Bayesian mixed models: stride phase x condition (secondary)",
+     lambda: bayes_glmm.main([])),
+    ("clocktime", "Clock-time control (Hz vs cps)", lambda: clocktime_control.main()),
+    ("conditions", "Standing vs walking: performance, H5 threshold, calibration transfer",
+     lambda: conditions.main()),
+    ("threshold_phase", "Stride phase on the threshold scale (secondary)",
+     lambda: threshold_phase.main()),
+    # After the calibration transfer, the phase stages and the common-phase test it reads.
+    ("power", "Power: calibration cost and a shared oscillation", lambda: power.main()),
+    ("descriptive", "Descriptive dataset overview", lambda: descriptive.main()),
+    # Reads the walking thresholds of the conditions stage for its head-roll figure.
+    ("response_bias", "Stance foot, SDT and head roll (exploratory)", lambda: response_bias.main()),
+    ("press_phase", "Button presses over the stride (exploratory)", lambda: press_phase.main()),
+    # After the population stage and press_phase, whose results it sets beside its own.
+    ("group_curve", "Group-average-curve analysis, calibrated (exploratory)",
+     lambda: group_curve.main()),
+    ("head_motion", "Head stabilisation and kinematics (exploratory)", lambda: head_motion.main()),
+    ("gait_dynamics", "Gait dynamics and phase response (exploratory)",
+     lambda: gait_dynamics.main()),
+    ("report", "Dataset summary + HTML report", lambda: report.main()),
+]
+STAGES = [k for k, _, _ in PIPELINE]
 
 
 _TIMINGS: list[tuple[str, float]] = []
@@ -110,173 +128,16 @@ def main() -> None:
     if args.no_cache:
         stage_cache.ENABLED = False
 
-    steps = STAGES if not args.only else [args.only]
+    steps = [args.only] if args.only else list(STAGES)
     if args.skip_bids and "bids" in steps:
         steps.remove("bids")
 
-    if "bids" in steps:
-        _lap('1. BIDS conversion')
-        print("\n########## 1. BIDS conversion ##########")
-        bidsify.convert_all()
-    if "calibration" in steps:
-        _lap('2. Calibration figures')
-        print("\n########## 2. Calibration figures ##########")
-        calibration.main()
-    if "gate" in steps:
-        # Built right after the calibration verdicts it depends on. The presentation flags
-        # come first, since the block rule is judged on the trials they keep. Later stages
-        # read both and print their N; bids_io.load_gate and presentation.trial_flags
-        # rebuild them if stale (e.g. with --only).
-        _lap('2b. Presentation rule + exclusion gate (derivatives/qc/)')
-        print("\n########## 2b. Presentation rule + exclusion gate (derivatives/qc/) ##########")
-        presentation.main()
-        block_rules.main()
-    if "calib_refit" in steps:
-        _lap('2c. Calibration slope/lapse refit (b8)')
-        print("\n########## 2c. Calibration slope/lapse refit (b8) ##########")
-        calibration_refit.main()
-    if "qc" in steps:
-        _lap('3. Quality control')
-        print("\n########## 3. Quality control ##########")
-        qc.main()
-    if "gait" in steps:
-        _lap('4. Gait extraction')
-        print("\n########## 4. Gait extraction ##########")
-        gait.main()
-    if "trial_table" in steps:
-        _lap('4a. Trial table (derivatives/trial_table/trials.tsv)')
-        print("\n########## 4a. Trial table (derivatives/trial_table/trials.tsv) ##########")
-        trial_table.main()
-    if "step_table" in steps:
-        _lap('4b. Step table (derivatives/step_table/steps.tsv)')
-        print("\n########## 4b. Step table (derivatives/step_table/steps.tsv) ##########")
-        step_table.main()
-    if "phase" in steps:
-        _lap('5. Stride-phase modulation (per participant)')
-        print("\n########## 5. Stride-phase modulation (per participant) ##########")
-        phase_analysis.main()
-    if "agnostic" in steps:
-        _lap('6. CONFIRMATORY phase-agnostic population test')
-        print("\n########## 6. CONFIRMATORY phase-agnostic population test ##########")
-        group_agnostic.main()
-    if "common_phase" in steps:
-        _lap('6a. Common-phase population test - Hotelling T2 (secondary)')
-        print("\n########## 6a. Common-phase population test - Hotelling T2 (secondary) ##########")
-        common_phase.main()
-    if "glmm" in steps:
-        _lap('6a. Hierarchical GLMM — common-phase (secondary)')
-        print("\n########## 6a. Hierarchical GLMM — common-phase (secondary) ##########")
-        glmm.main()
-    if "bayes_glmm" in steps:
-        _lap('6a2. Bayesian mixed models: stride phase x condition (secondary)')
-        print("\n########## 6a2. Bayesian mixed models: stride phase x condition (secondary) ##########")
-        bayes_glmm.main([])
-        print("\n  -- the same accuracy model, phase read at the press (exploratory) --")
-        bayes_glmm.main(["--lock", "press"])
-    if "population" in steps:
-        _lap('6b. Population prevalence & phase (Fig 4/5)')
-        print("\n########## 6b. Population prevalence & phase (Fig 4/5) ##########")
-        population.main()
-    if "planning" in steps:
-        _lap('6d. Prevalence precision planning')
-        print("\n########## 6d. Prevalence precision planning ##########")
-        prevalence_planning.main()
-    if "clocktime" in steps:
-        _lap('6e. Clock-time control (Supp Fig 5/6: Hz vs cps)')
-        print("\n########## 6e. Clock-time control (Supp Fig 5/6: Hz vs cps) ##########")
-        clocktime_control.main()
-    if "conditions" in steps:
-        _lap('7. Standing vs walking (Fig 2)')
-        print("\n########## 7. Standing vs walking (Fig 2) ##########")
-        conditions.main()
-    if "threshold" in steps:
-        _lap('7a. Threshold standing vs walking (H5)')
-        print("\n########## 7a. Threshold standing vs walking (H5) ##########")
-        threshold_by_condition.main()
-    if "calib_transfer" in steps:
-        _lap('7a2. Calibration transfer: calibrated vs block threshold')
-        print("\n########## 7a2. Calibration transfer: calibrated vs block threshold ##########")
-        calibration_transfer.main()
-    if "threshold_phase" in steps:
-        _lap('7a3. Stride-phase modulation of the threshold, information-weighted (secondary)')
-        print("\n########## 7a3. Stride-phase modulation of the threshold, information-weighted (secondary) ##########")
-        threshold_phase.main()
-    if "calib_cost" in steps:
-        # After calib_transfer, whose ratios it simulates.
-        _lap('7a4. Calibration cost: information and power at the observed calibration error')
-        print("\n########## 7a4. Calibration cost: information and power at the observed calibration error ##########")
-        calibration_cost.main()
-    if "shared_power" in steps:
-        # After the phase stages and common_phase, whose trial counts and amplitudes it reads.
-        _lap('7a5. Power for a stride-phase oscillation shared by all participants')
-        print("\n########## 7a5. Power for a stride-phase oscillation shared by all participants ##########")
-        shared_power.main()
-    if "descriptive" in steps:
-        _lap('7b. Descriptive dataset overview (exploratory)')
-        print("\n########## 7b. Descriptive dataset overview (exploratory) ##########")
-        descriptive.main()
-    if "onset_response" in steps:
-        _lap('7c. Onset vs response locus (exploratory)')
-        print("\n########## 7c. Onset vs response locus (exploratory) ##########")
-        onset_response.main()
-    if "press_phase" in steps:
-        _lap('7c2. Button presses over the stride (exploratory)')
-        print("\n########## 7c2. Button presses over the stride (exploratory) ##########")
-        press_phase.main()
-    if "press_accuracy" in steps:
-        _lap('7c3. Accuracy and the stride phase at the press (exploratory)')
-        print("\n########## 7c3. Accuracy and the stride phase at the press (exploratory) ##########")
-        press_accuracy.main()
-    if "group_curve" in steps:
-        # After the population stages and press_phase, whose results it sets beside its own.
-        _lap('7c4. Group-average-curve analysis, calibrated (exploratory comparison)')
-        print("\n########## 7c4. Group-average-curve analysis, calibrated (exploratory comparison) ##########")
-        group_curve.main()
-    if "gam" in steps:
-        _lap('7d. Cyclic-spline GAM + mutual information (exploratory)')
-        print("\n########## 7d. Cyclic-spline GAM + mutual information (exploratory) ##########")
-        gam_phase.main()
-    if "ddm" in steps:
-        _lap('7e. Drift-diffusion decomposition (exploratory)')
-        print("\n########## 7e. Drift-diffusion decomposition (exploratory) ##########")
-        ddm_phase.main()
-    if "stance_foot" in steps:
-        _lap('7f. Stance-foot contrast — which foot is down (exploratory)')
-        print("\n########## 7f. Stance-foot contrast — which foot is down (exploratory) ##########")
-        stance_foot.main()
-    if "sdt" in steps:
-        _lap('7g. Sensitivity vs criterion — SDT decomposition (exploratory)')
-        print("\n########## 7g. Sensitivity vs criterion — SDT decomposition (exploratory) ##########")
-        sdt_phase.main()
-    if "roll_bias" in steps:
-        # Reads the walking thresholds from the conditions stage (7a) for its figure.
-        _lap('7g2. Head roll and the left/right response (exploratory)')
-        print("\n########## 7g2. Head roll and the left/right response (exploratory) ##########")
-        roll_bias.main()
-    if "phase_methods" in steps:
-        _lap('7h. Stride-phase methods on held-out signals (exploratory)')
-        print("\n########## 7h. Stride-phase methods on held-out signals (exploratory) ##########")
-        gait_phase_methods.main()
-    if "head_stability" in steps:
-        _lap('7i. Head stabilisation over the stride (exploratory)')
-        print("\n########## 7i. Head stabilisation over the stride (exploratory) ##########")
-        head_stability.main()
-    if "head_kinematics" in steps:
-        _lap('7i2. Head kinematics over the stride (exploratory)')
-        print("\n########## 7i2. Head kinematics over the stride (exploratory) ##########")
-        head_kinematics.main()
-    if "gait_dynamics" in steps:
-        _lap('7j. Stride-to-stride gait dynamics (exploratory)')
-        print("\n########## 7j. Stride-to-stride gait dynamics (exploratory) ##########")
-        gait_dynamics.main()
-    if "gait_prc" in steps:
-        _lap('7k. Gait phase response to task events (exploratory)')
-        print("\n########## 7k. Gait phase response to task events (exploratory) ##########")
-        gait_prc.main()
-    if "report" in steps:
-        _lap('8. Dataset summary + HTML report (b6/b7)')
-        print("\n########## 8. Dataset summary + HTML report (b6/b7) ##########")
-        report.main()
+    for n, (key, title, run) in enumerate(PIPELINE, start=1):
+        if key not in steps:
+            continue
+        _lap(f"{n}. {title}")
+        print(f"\n########## {n}. {title} ##########")
+        run()
 
     _lap(None)
     _print_timings()

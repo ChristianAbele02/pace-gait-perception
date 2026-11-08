@@ -9,8 +9,9 @@ and the onset/mocap columns. Then converts them and runs the pipeline stages lis
 Checks end to end that:
   * logger output converts to BIDS with correct acq- names and run indices (no block of
     a condition overwrites another);
-  * walking runs are pooled per participant, and the population stages (GLMM, de-biased
-    prevalence) and the standing-vs-walking comparison work with n > 1 and both conditions.
+  * walking runs are pooled per participant, and the population stages (phase-agnostic
+    test, de-biased prevalence) and the standing-vs-walking comparison work with n > 1
+    and both conditions.
 
 Generative model. Trials come from a two-boundary drift-diffusion process, so choice and
 RT are consistent, which the DDM, GAM and onset-vs-response modules need. Drift depends on
@@ -88,7 +89,7 @@ DAVIDSON = dict(baseline_acc=0.75, targets_per_pp=836,
 
 
 # ---------------------------------------------------------------------------
-# Weibull (as in calibration_refit), used for the calibration log
+# Weibull (as in the calibration refit), used for the calibration log
 # ---------------------------------------------------------------------------
 def _weibull(x, alpha, beta=3.2, lapse=0.03, guess=0.5):
     f = 1.0 - np.exp(-np.power(np.clip(x, 1e-9, None) / alpha, beta))
@@ -317,7 +318,7 @@ def generate(n_participants: int, raw_dir: Path, walk_s=360.0, stand_s=220.0,
         cdw, thw = _calibration_run(thr_walk, seed=100 + p)
         _write_calibration_csv(cdw, thw, raw_dir / f"p{p:02d}-b1-t01_calibration_walking.csv")
         # Experiment blocks. With visits=2 the order crosses over between visits as on the
-        # rig, so threshold_by_condition._crossover_model is estimable. Run indices count
+        # rig, so conditions._crossover_model is estimable. Run indices count
         # across visits (both in ses-02).
         for visit in range(1, visits + 1):
             s_first = standing_first(p, visit)
@@ -381,54 +382,36 @@ def main():
 
     # Stages read C.BIDS_DIR / C.DERIV_DIR at call time, so they use bids_sim/.
     try:
-        from . import (bidsify, bids_io, qc, block_rules, calibration, calibration_refit, gait,
-                       phase_analysis, group_agnostic, glmm, population,
-                       prevalence_planning, clocktime_control, conditions,
-                       threshold_by_condition, descriptive, report,
-                       onset_response, gam_phase, ddm_phase, stance_foot, sdt_phase,
-                       common_phase, gait_phase_methods, head_stability, gait_dynamics,
-                       gait_prc)
+        from . import (bidsify, bids_io, calibration, clocktime_control, conditions,
+                       descriptive, exclusion, gait, gait_dynamics, head_motion,
+                       phase_analysis, population, qc, report, response_bias)
     except ImportError:
-        import bidsify, bids_io, qc, block_rules, calibration, calibration_refit, gait
-        import phase_analysis, group_agnostic, glmm, population, prevalence_planning
-        import clocktime_control, conditions, threshold_by_condition, descriptive, report
-        import onset_response, gam_phase, ddm_phase, stance_foot, sdt_phase
-        import common_phase
-        import gait_phase_methods, head_stability, gait_dynamics, gait_prc
+        import bidsify, bids_io, calibration, clocktime_control, conditions
+        import descriptive, exclusion, gait, gait_dynamics, head_motion
+        import phase_analysis, population, qc, report, response_bias
 
     print("\n-- convert --")
     bidsify.convert_all(raw_dir=raw_dir, bids_dir=sim_root, prune_loose=True)
     print("\n-- qc --")
     for r in bids_io.find_recordings(sim_root, include_excluded=True):
         qc.qc_recording(r)
-    print("\n-- calibration --");        calibration.main()
-    print("\n-- exclusion gate --");     block_rules.main()
-    print("\n-- calibration refit --");  calibration_refit.main()
+    print("\n-- calibration --");        calibration.check_main()
+    print("\n-- exclusion gate --");     exclusion.rules_main()
+    print("\n-- calibration refit --");  calibration.refit_main()
     print("\n-- gait --");        gait.main()
     print("\n-- phase --");       phase_analysis.main()
-    # --- confirmatory population test ---
-    print("\n-- phase-agnostic population test (CONFIRMATORY) --")
-    group_agnostic.main()
-    print("\n-- common-phase Hotelling T2 (secondary) --")
-    common_phase.main()
-    print("\n-- glmm (descriptive estimates only) --");  glmm.main()
-    print("\n-- population prevalence --");           population.main()
-    print("\n-- prevalence planning --");             prevalence_planning.main()
+    # --- population tests: confirmatory phase-agnostic test, common phase, prevalence ---
+    print("\n-- population --");  population.main()
     print("\n-- clocktime --");   clocktime_control.main()
-    print("\n-- conditions --");  conditions.main()
+    print("\n-- conditions --");  conditions.cond_main()
     print("\n-- threshold standing vs walking (H5) --")
-    threshold_by_condition.main()
+    conditions.threshold_main()
     print("\n-- descriptive --"); descriptive.main()
     # --- exploratory analyses ---
-    print("\n-- onset-vs-response (exploratory) --");  onset_response.main()
-    print("\n-- GAM + mutual information (exploratory) --");  gam_phase.main()
-    print("\n-- drift-diffusion decomposition (exploratory) --");  ddm_phase.main()
-    print("\n-- stance-foot contrast (exploratory) --");  stance_foot.main()
-    print("\n-- sensitivity vs criterion (exploratory) --");  sdt_phase.main()
-    print("\n-- stride-phase methods (exploratory) --");  gait_phase_methods.main()
-    print("\n-- head stabilisation (exploratory) --");  head_stability.main()
-    print("\n-- gait dynamics (exploratory) --");  gait_dynamics.main()
-    print("\n-- gait phase response (exploratory) --");  gait_prc.main()
+    print("\n-- stance-foot contrast (exploratory) --");  response_bias.stance_main()
+    print("\n-- sensitivity vs criterion (exploratory) --");  response_bias.sdt_main()
+    print("\n-- head stabilisation (exploratory) --");  head_motion.stability_main()
+    print("\n-- gait dynamics and phase response (exploratory) --");  gait_dynamics.main()
     print("\n-- report --");      report.main()
 
     print(f"\nSim dataset at {sim_root}.")

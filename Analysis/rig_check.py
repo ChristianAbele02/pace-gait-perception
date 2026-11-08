@@ -10,10 +10,10 @@ the analysis relies on:
   right leg, and the first single support of a walk started with the right foot all move
   ``head_local_pos_x`` the same way;
 * forward: a step forward moves ``head_local_pos_z`` (and the raw Motive position);
-* head rotation, as the analysis computes it (``head_stability.rotation_on_grid``: the
+* head rotation, as the analysis computes it (``head_motion.rotation_on_grid``: the
   rotation from the mean pose, as a rotation vector of the logged Motive quaternion):
-  pitch about x as ``head_stability.pitch_axis`` orients it, roll and yaw about
-  ``head_kinematics``' axes. A chin-down nod, the right ear to the right shoulder and a
+  pitch about x as ``head_motion.pitch_axis`` orients it, roll and yaw about
+  ``head_motion``'s axes. A chin-down nod, the right ear to the right shoulder and a
   head turn to the right must come out positive pitch, negative roll and positive yaw.
   The raw rotation-vector components are kept in the JSON as the record of what Motive
   delivers.
@@ -63,8 +63,7 @@ try:
     from . import clean
     from . import config as C
     from . import gait as gait_mod
-    from . import head_kinematics as hk
-    from . import head_stability as hs
+    from . import head_motion
     from . import plotstyle as S
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -73,8 +72,7 @@ except ImportError:
     import clean
     import config as C
     import gait as gait_mod
-    import head_kinematics as hk
-    import head_stability as hs
+    import head_motion
     import plotstyle as S
 
 S.apply()
@@ -148,10 +146,10 @@ def pose_on_grid(motion) -> dict:
             v[stale] = np.nan
         ok = np.isfinite(v)
         out[name] = np.interp(tg, t[ok], v[ok])
-    ok = hs._good_pose_frames(motion)
+    ok = head_motion._good_pose_frames(motion)
     if stale is not None:
         ok &= ~stale
-    rot = Rotation.from_quat(motion.loc[ok, hs.QUAT].to_numpy(float))
+    rot = Rotation.from_quat(motion.loc[ok, head_motion.QUAT].to_numpy(float))
     rv = np.degrees(rot.as_rotvec())
     med = median_filter(rv, size=(31, 1), mode="nearest")
     keep = np.linalg.norm(rv - med, axis=1) < SPIKE_DEG
@@ -164,11 +162,11 @@ def pose_on_grid(motion) -> dict:
     k = max(1, int(SMOOTH_S * GRID_FS))
     for name in ("x", "z", "mocap_z", "rv_x", "rv_y", "rv_z"):
         out[name] = median_filter(out[name], size=k, mode="nearest")
-    # the analysis's channels: pitch about x oriented as head_stability.pitch_axis orients
-    # it, roll and yaw about head_kinematics' axes
+    # the analysis's channels: pitch about x oriented as head_motion.pitch_axis orients
+    # it, roll and yaw about head_motion's axes
     rv = np.column_stack([out["rv_x"], out["rv_y"], out["rv_z"]])
-    out["pitch"] = rv @ hs.pitch_axis_orientation(np.array([1.0, 0.0, 0.0]))
-    out["roll"], out["yaw"] = rv @ hk.ROLL_AXIS, rv @ hk.YAW_AXIS
+    out["pitch"] = rv @ head_motion.pitch_axis_orientation(np.array([1.0, 0.0, 0.0]))
+    out["roll"], out["yaw"] = rv @ head_motion.ROLL_AXIS, rv @ head_motion.YAW_AXIS
     return out
 
 
@@ -321,15 +319,15 @@ def walking_start(rec, motion) -> dict:
 
 
 def walking_pitch_axis(rec, motion) -> list[float]:
-    """The pitch axis ``head_stability`` would pick for this walk (room frame)."""
+    """The pitch axis ``head_motion`` would pick for this walk (room frame)."""
     res = gait_mod.extract_gait(rec)
     valid = np.isfinite(res.stride_phase_cont)
-    rot = hs.rotation_on_grid(motion, res.t_grid, valid)
+    rot = head_motion.rotation_on_grid(motion, res.t_grid, valid)
     fs = 1.0 / float(np.median(np.diff(res.t_grid)))
     step_hz = 1.0 / float(np.median(np.diff(res.trough_times)))
     rv = rot["rotvec"].copy()
     rv[~np.all(np.isfinite(rv), axis=1)] = 0.0
-    axis, _ = hs.pitch_axis(rv, fs, step_hz)
+    axis, _ = head_motion.pitch_axis(rv, fs, step_hz)
     return [round(float(v), 3) for v in axis]
 
 

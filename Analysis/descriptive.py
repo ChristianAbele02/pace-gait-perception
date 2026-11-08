@@ -2,7 +2,7 @@
 
 No inferential statistics. Summarises behaviour, stimulus, gait and tracking quality
 per participant and condition for a first look at the data. Inferential analyses are in
-`phase_analysis`, `glmm` and `population`.
+`phase_analysis`, `population` and `bayes_glmm`.
 
 Choices:
   * proportions (accuracy, response-side bias) use Wilson 95 % score intervals, which
@@ -44,13 +44,13 @@ try:
     from . import config as C
     from . import bids_io
     from . import plotstyle as S
-    from . import threshold_by_condition as tbc
+    from . import conditions as tbc
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import config as C
     import bids_io
     import plotstyle as S
-    import threshold_by_condition as tbc
+    import conditions as tbc
 
 S.apply()
 
@@ -631,7 +631,7 @@ def sample_figures() -> None:
     """The three manuscript figures that introduce the sample."""
     tabs = _sample_tables()
     if tabs is None:
-        print("  no trial table - run the trial_table stage first; sample figures skipped")
+        print("  no trial table - run the tables stage first; sample figures skipped")
         return
     t, units, gait = tabs
     figs = bids_io.fig_dir("descriptive")

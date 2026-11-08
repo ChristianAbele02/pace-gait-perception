@@ -10,7 +10,7 @@ inflated ~2.8×. Consequences:
 
 * Per-participant detection and Bayesian prevalence are out of reach at any feasible trial
   count, and are **exploratory**.
-* The confirmatory test is the phase-agnostic [`group_agnostic.py`](../group_agnostic.py):
+* The confirmatory test is the phase-agnostic [`population.py`](../population.py):
   **91 %** power at N = 12 × 1440 walking trials, where the common-phase test reaches **15 %**.
 * The design is **8 walking + 2 standing blocks** over two visits, recruiting N = 20 with a
   minimum of 12 analysable, rather than 6 + 4 (*Design trade-off* below).
@@ -33,9 +33,9 @@ own chain, and `validate` checks each step against the pipeline function itself:
 | difficulty residualisation | `phase_analysis.difficulty_adjust` | 2e-16 |
 | 40 bins, fit weighted by bin occupancy | `phase_analysis._spectrum_with_coef` | 4e-16 |
 | per-participant R² at 2 & 4 cps vs 1000 trial-level permutations, Holm | `phase_analysis.analyse_measure` | 25/25 identical p-values on shared permutations |
-| population `S = Σ|zᵢ|²/sᵢ²`, Holm | `group_agnostic.agnostic_test` | power 90.7 % vs 90.7 % on real permutations |
-| common-phase Hotelling T², Holm | `common_phase.hotelling_t2` | 2e-16 |
-| fixed-slope Weibull ML threshold | `threshold_by_condition.fit_alpha` | 1e-5 relative |
+| population `S = Σ|zᵢ|²/sᵢ²`, Holm | `population.agnostic_test` | power 90.7 % vs 90.7 % on real permutations |
+| common-phase Hotelling T², Holm | `population.hotelling_t2` | 2e-16 |
+| fixed-slope Weibull ML threshold | `conditions.fit_alpha` | 1e-5 relative |
 
 Three shortcuts make it fast, and each is exact:
 
@@ -221,7 +221,7 @@ which the two-visit design already powers at N ≈ 7.
 | 1260 | 7 | 0.860 | 0.919 | 0.966 |
 | **1440** | **8 *(adopted)*** | **0.925** | **0.957** | **0.986** |
 
-**Cost:** SD of the standing 75 % threshold, estimated by `threshold_by_condition`'s
+**Cost:** SD of the standing 75 % threshold, estimated by `conditions.py`'s
 fixed-slope Weibull ML with the rig's three levels (true threshold 6.0°, 4000 simulations).
 
 | standing trials | blocks | SD | % of threshold |

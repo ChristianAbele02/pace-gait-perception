@@ -2,7 +2,7 @@
 
 Trial-level model complementing the confirmatory phase-agnostic test: one model per
 measure over walking and standing trials (standing as control), fitted by MCMC (NumPyro
-NUTS), which avoids the underestimated uncertainty of the variational fit in ``glmm.py``.
+NUTS), which avoids the underestimated uncertainty of a variational (mean-field) fit.
 
 Model (trial j of participant i; W = 1 walking, 0 standing; f = 2 and 4 cps)::
 
@@ -19,7 +19,7 @@ Walking trials use the stride phase at stimulus onset (gait.py, as in phase_anal
 Standing trials (negative control) get a virtual stride phase: onset time on a clock at the
 participant's median walking stride time, with a seeded random start. Stimulus timing (ISI
 and jitter) is as in walking, so timing-only modulation would also appear in standing, and
-no motion signal is used. The head-sway surrogate in glmm.py is not a clean null: as a
+no motion signal is used. A head-sway (Hilbert) surrogate is not a clean null: as a
 zero-phase filtered analytic signal, head movements evoked by stimulus or key press leak
 back to the onset, and its onset phases can cluster at the 4-cps harmonic.
 
@@ -34,7 +34,7 @@ What it answers, per measure and frequency:
 * Walking specificity: the same for standing, ``mu_walk - mu_stand`` and
   P(tau_walk > tau_stand).
 * Walking main effect ``b``: accuracy in percentage points, RT in percent. The accuracy
-  effect is confounded with calibration transfer per condition (calibration_transfer.py)
+  effect is confounded with calibration transfer per condition (conditions.py)
   and with condition order; reported, not tested.
 
 Priors follow Davidson et al. (2024): the per-participant RMS amplitude of 0.026 in hit
@@ -46,18 +46,9 @@ individual-phase oscillators and reports how often each Bayes factor exceeds 3.
 Outputs (``derivatives/bayes_glmm/``): ``bayes_glmm.json`` (estimates, Bayes factors,
 sampler diagnostics), ``bayes_glmm_participants.tsv`` and ``figures/bayes_glmm.png|pdf``.
 
-Press-locked variant (``--lock press``, exploratory). The same accuracy model with the
-phase read at the button press (onset + RT) instead of the onset; standing trials use the
-same virtual clock, read at onset + RT. Only answered trials with RT >= ``RT_MIN_S`` enter.
-Log RT is not modelled here: the press phase is built from the RT, so the two are tied by
-construction and need the RT-shuffle null of ``press_accuracy.py``. An oscillation locked to
-the onset is attenuated in this model by the spread of the RTs (``press_accuracy`` reports
-the factor), and vice versa. Outputs carry the stem ``bayes_glmm_press``.
-
 Usage::
 
     python -m Analysis.bayes_glmm
-    python -m Analysis.bayes_glmm --lock press    # accuracy against the phase at the press
     python -m Analysis.bayes_glmm --validate      # slow: simulation check of the BFs
 """
 from __future__ import annotations
@@ -105,10 +96,8 @@ PRIORS = {
            "mu": 0.05, "tau": 0.05, "sigma": 0.5},
 }
 MEASURES = ("accuracy", "rt")
-# Measures fitted per phase reference (see the module docstring for why press is accuracy only).
-LOCK_MEASURES = {"onset": MEASURES, "press": ("accuracy",)}
-LOCK_STEM = {"onset": "bayes_glmm", "press": "bayes_glmm_press"}
-# One XLA host device per chain for parallel chains; must be set before importing JAX.
+STEM = "bayes_glmm"
+# Parallel chains need one XLA host device per chain, set before JAX is first imported.
 os.environ.setdefault("XLA_FLAGS", f"--xla_force_host_platform_device_count={N_CHAINS}")
 
 
@@ -121,9 +110,8 @@ def available() -> bool:
 # ===========================================================================
 # Data
 # ===========================================================================
-def _walking_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
-    """Trials of one walking block with the stride phase at onset or, for
-    ``lock="press"``, at the press."""
+def _walking_rows(rec) -> pd.DataFrame | None:
+    """Trials of one walking block with the stride phase at the stimulus onset."""
     npz = bids_io.deriv_dir("gait", rec.sub, rec.ses) / f"{rec.label()}_gait.npz"
     if not npz.exists():
         return None
@@ -133,9 +121,8 @@ def _walking_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
     tp = pa._trial_phases(rec, g["troughs"], step_foot, tg, pa.continuous_phase(g))
     if tp is None:
         return None
-    ev = tp[0] if lock == "onset" else tp[1]
-    col = "phase_target" if lock == "onset" else "phase_response"
-    return pd.DataFrame({"sub": rec.sub, "walk": 1, "phase": ev[col].to_numpy(float),
+    ev = tp[0]
+    return pd.DataFrame({"sub": rec.sub, "walk": 1, "phase": ev["phase_target"].to_numpy(float),
                          "difficulty": ev["difficulty"].to_numpy(),
                          "response_correct": ev["response_correct"].to_numpy(float),
                          "rt": ev["response_time"].to_numpy(float)})
@@ -154,9 +141,8 @@ def _stride_s(sub: str) -> float:
     return float(np.median(vals)) if vals else DEFAULT_STRIDE_S
 
 
-def _standing_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
-    """Trials of one standing block on the virtual stride clock, read at onset or,
-    for ``lock="press"``, at onset + RT."""
+def _standing_rows(rec) -> pd.DataFrame | None:
+    """Trials of one standing block on the virtual stride clock, read at the onset."""
     ev = bids_io.load_events(rec)
     ev = ev[(ev["is_training"] == 0) & ev["onset"].notna()]
     if ev.empty:
@@ -165,8 +151,6 @@ def _standing_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
     seed = SEED + int.from_bytes(rec.label().encode(), "little") % 100_003
     start = np.random.default_rng(seed).uniform(0, stride)
     t = ev["onset"].to_numpy(float)
-    if lock == "press":
-        t = t + ev["response_time"].to_numpy(float)          # NaN for a timeout
     phase = 100.0 * (((t + start) / stride) % 1.0)
     return pd.DataFrame({"sub": rec.sub, "walk": 0, "phase": phase,
                          "difficulty": ev["difficulty"].to_numpy(),
@@ -174,21 +158,19 @@ def _standing_rows(rec, lock: str = "onset") -> pd.DataFrame | None:
                          "rt": ev["response_time"].to_numpy(float)})
 
 
-def gather_trials(lock: str = "onset") -> pd.DataFrame:
+def gather_trials() -> pd.DataFrame:
     """Answered trials of all walking and standing blocks in the behaviour scope, with the
-    phase at onset or, with ``lock="press"``, at the press."""
+    phase at the stimulus onset."""
     frames = []
     for rec in bids_io.find_recordings():
-        f = _walking_rows(rec, lock) if rec.condition == "walking" else (
-            _standing_rows(rec, lock) if rec.condition == "standing" else None)
+        f = _walking_rows(rec) if rec.condition == "walking" else (
+            _standing_rows(rec) if rec.condition == "standing" else None)
         if f is not None and len(f):
             frames.append(f)
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
     df = df[df["response_correct"].isin([0, 1]) & df["phase"].notna()].copy()
-    if lock == "press":                     # an anticipation is not a response to the target
-        df = df[df["rt"] >= RT_MIN_S].copy()
     df["correct"] = df["response_correct"].astype(int)
     return df.reset_index(drop=True)
 
@@ -524,16 +506,14 @@ def _describe(results: dict) -> None:
 
 
 def main(argv=None) -> dict | None:
-    """Fit the measures for the chosen phase reference, summarise, and write outputs and figure."""
+    """Fit both measures, summarise, and write outputs and figure."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--validate", action="store_true", help="simulation check of the BFs")
     ap.add_argument("--reps", type=int, default=20)
-    ap.add_argument("--lock", choices=tuple(LOCK_MEASURES), default="onset",
-                    help="read the stride phase at the stimulus onset or at the press")
     ap.add_argument("--figure-only", action="store_true",
                     help="redraw the figure from the saved results and draws")
     args = ap.parse_args(argv)
-    measures, stem = LOCK_MEASURES[args.lock], LOCK_STEM[args.lock]
+    measures, stem = MEASURES, STEM
     if args.figure_only:
         out = bids_io.deriv_dir("bayes_glmm")
         results = json.loads((out / f"{stem}.json").read_text(encoding="utf-8"))
@@ -548,10 +528,8 @@ def main(argv=None) -> dict | None:
     if args.validate:
         return validate(args.reps)
 
-    title = ("=== Bayesian mixed models: stride phase x condition (SECONDARY) ===" if
-             args.lock == "onset" else
-             "=== Bayesian mixed model: accuracy x stride phase at the press (EXPLORATORY) ===")
-    df = gather_trials(args.lock)
+    title = "=== Bayesian mixed models: stride phase x condition (SECONDARY) ==="
+    df = gather_trials()
     bids_io.gate_report(stem, condition=("standing", "walking"),
                         analysed_subjects=sorted(df["sub"].unique()) if len(df) else [])
     if df.empty or df["sub"].nunique() < 2:
@@ -570,7 +548,7 @@ def main(argv=None) -> dict | None:
         PRIORS, FREQS, RT_MIN_S, [N_CHAINS, N_WARMUP, N_SAMPLES, SEED],
         *[[arrs[m]["subs"], arrs[m]["sub"], arrs[m]["walk"], arrs[m]["hard"],
            arrs[m]["easy"], arrs[m]["harm"], arrs[m]["y"]] for m in measures])
-    key = "fit" if args.lock == "onset" else f"fit_{args.lock}"
+    key = "fit"
     if stage_cache.is_fresh("bayes_glmm", key, fp, outputs):
         print(title)
         print("  inputs, code and settings unchanged since the last fit: reusing it")
@@ -590,12 +568,9 @@ def main(argv=None) -> dict | None:
             tabs.append(participant_table(post, arr, meas))
         desc = ("Bayesian mixed models of stride phase (walking) and a virtual stride phase "
                 "(standing) on accuracy and log RT, NumPyro NUTS (bayes_glmm.py). Secondary "
-                "to the phase-agnostic confirmatory test." if args.lock == "onset" else
-                "EXPLORATORY. The accuracy model of bayes_glmm.py with the stride phase read "
-                "at the button press (onset + RT; standing: the virtual clock at onset + RT). "
-                "Answered trials with RT >= RT_MIN_S.")
+                "to the phase-agnostic confirmatory test.")
         outputs[0].write_text(json.dumps({
-            "Description": desc, "Phase_reference": args.lock,
+            "Description": desc, "Phase_reference": "onset",
             "Priors": PRIORS, "Frequencies_cps": list(FREQS), "BF_evidence": BF_EVIDENCE,
             "Units": "accuracy: hit-rate at the base rate; rt: log RT (about a proportion)",
             **results}, indent=2, default=float), encoding="utf-8")

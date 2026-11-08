@@ -5,7 +5,7 @@ once to the other condition. The leading condition comes from a permuted-block a
 (``ExperimentConductor.ALLOCATION``) and crosses over between the two visits. This is why
 there are two visits: each participant fills all four condition x session-half cells, so
 the standing-versus-walking threshold contrast is within-participant and free of
-time-on-task (``Analysis/threshold_by_condition._crossover_model``).
+time-on-task (``Analysis/conditions._crossover_model``).
 
 Styling is shared with ``make_trial_flow`` via ``diagram_kit.FLOW``. Trial budget and power
 are in the ``davidson_power`` figures.

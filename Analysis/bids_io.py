@@ -105,19 +105,44 @@ def _condition_for(sub: str, ses: str, bids_dir: Path) -> str:
 # The exclusion gate
 # ---------------------------------------------------------------------------
 # derivatives/qc/gate.tsv decides which blocks and calibrations each analysis may use.
-# block_rules.py writes it (stage "gate", after the calibration verdicts); stages read it
+# exclusion.py writes it (stage "gate", after the calibration verdicts); stages read it
 # via find_recordings() / excluded_calibrations() and report their N with gate_report().
 # One decision column per scope, since a participant at chance can still have good gait:
-#   behaviour - analyses of responses (accuracy, RT, thresholds, SDT, DDM...): manual list
+#   behaviour - analyses of responses (accuracy, RT, thresholds, SDT...): manual list
 #               plus the automatic rule while config.APPLY_BLOCK_RULE is on.
 #   gait      - analyses of walking only: manual list plus the frame-rate criterion, which
 #               makes the gait unmeasurable too.
+# The manual list is config.EXCLUDED_RECORDINGS (per block) plus every block and
+# calibration of a participant rated "not useful" (excluded_participants()).
 # Below block level, load_events() drops the trials the presentation rule flags
-# (presentation.py, derivatives/qc/presentation_flags.tsv) in both scopes. The block
+# (exclusion.py, derivatives/qc/presentation_flags.tsv) in both scopes. The block
 # rule is judged on the remaining trials.
 GATE_FILE = "gate.tsv"
 GATE_LEDGER_FILE = "gate_ledger.tsv"
 SCOPES = ("behaviour", "gait")
+NOT_USEFUL_REASON = 'participant rated "not useful" (config.PARTICIPANT_RATINGS)'
+
+
+def excluded_participants() -> dict[str, str]:
+    """``{participant: reason}`` for participants left out of every analysis: those rated
+    "not useful" in ``config.PARTICIPANT_RATINGS`` while
+    ``config.EXCLUDE_NOT_USEFUL_PARTICIPANTS`` is True. All their blocks and calibrations
+    leave both scopes, as if each were on the manual list."""
+    if not getattr(C, "EXCLUDE_NOT_USEFUL_PARTICIPANTS", False):
+        return {}
+    return {s: NOT_USEFUL_REASON
+            for s, r in sorted(getattr(C, "PARTICIPANT_RATINGS", {}).items())
+            if r == "not useful"}
+
+
+def _participant_recordings(bids_dir: Path | None, subs) -> list[str]:
+    """Recording labels of every motion file of the given participants."""
+    out = []
+    for sub in subs:
+        for tsv in sorted(Path(bids_dir or C.BIDS_DIR).glob(f"{sub}/ses-*/motion/*_motion.tsv")):
+            out.append(re.sub(r"_tracksys-[a-zA-Z0-9]+", "", tsv.name)
+                       .removesuffix("_motion.tsv"))
+    return out
 
 
 def _qc_dir(bids_dir: Path | None = None) -> Path:
@@ -126,12 +151,12 @@ def _qc_dir(bids_dir: Path | None = None) -> Path:
 
 def gate_settings() -> dict:
     """Config values the gate depends on; a change makes the gate stale."""
-    # Bump RuleVersion when block_rules changes its decisions.
+    # Bump RuleVersion when the block rule (exclusion.py) changes its decisions.
     try:
-        from . import presentation
+        from . import exclusion
     except ImportError:
-        import presentation
-    return {"RuleVersion": 6,
+        import exclusion
+    return {"RuleVersion": 7,
             "RuleActive": bool(getattr(C, "APPLY_BLOCK_RULE", False)),
             "Alpha": float(getattr(C, "BLOCK_RULE_ALPHA", 0.05)),
             "MaxTimeoutFraction": float(getattr(C, "BLOCK_RULE_MAX_TIMEOUT_FRACTION", 0.25)),
@@ -139,9 +164,10 @@ def gate_settings() -> dict:
             "MaxStimFactor": float(getattr(C, "BLOCK_RULE_MAX_STIM_FACTOR", 2.0)),
             "ChanceUnit": "participant x condition",
             "Manual": dict(sorted(getattr(C, "EXCLUDED_RECORDINGS", {}).items())),
+            "ManualParticipants": excluded_participants(),
             "PresentationRule": {
                 "Active": bool(getattr(C, "APPLY_PRESENTATION_RULE", False)),
-                **presentation.settings()}}
+                **exclusion.settings()}}
 
 
 def calibration_label(path: Path) -> str:
@@ -194,10 +220,10 @@ def load_gate(bids_dir: Path | None = None, refresh: bool = True) -> pd.DataFram
         if why:
             print(f"  [gate] rebuilding {GATE_FILE}: {why}")
             try:
-                from . import block_rules
+                from . import exclusion
             except ImportError:
-                import block_rules
-            block_rules.main(quiet=True)
+                import exclusion
+            exclusion.rules_main(quiet=True)
     f = _qc_dir(bids_dir) / GATE_FILE
     return pd.read_csv(f, sep="\t", dtype=str, keep_default_na=False) if f.exists() else pd.DataFrame()
 
@@ -212,12 +238,17 @@ def excluded_recordings(bids_dir: Path | None = None,
                         scope: str = "behaviour") -> dict[str, str]:
     """``{recording label: reason}`` for blocks excluded from ``scope``.
 
-    Always includes ``config.EXCLUDED_RECORDINGS``. If ``config.APPLY_BLOCK_RULE`` (or
+    Always includes the manual list: ``config.EXCLUDED_RECORDINGS`` and every block of a
+    participant in :func:`excluded_participants`. If ``config.APPLY_BLOCK_RULE`` (or
     ``apply_block_rule``) is True, also the blocks the automatic rule fails: every
     criterion for ``behaviour``, the frame-rate criterion alone for ``gait``.
     """
     _check_scope(scope)
     out = {k: f"manual: {v}" for k, v in getattr(C, "EXCLUDED_RECORDINGS", {}).items()}
+    parts = excluded_participants()
+    for sub, why in parts.items():
+        for lab in _participant_recordings(bids_dir, [sub]):
+            out.setdefault(lab, f"manual: {why}")
     if apply_block_rule is None:
         apply_block_rule = bool(getattr(C, "APPLY_BLOCK_RULE", False))
     if apply_block_rule:
@@ -232,15 +263,19 @@ def excluded_recordings(bids_dir: Path | None = None,
 
 
 def excluded_calibrations(bids_dir: Path | None = None) -> dict[str, str]:
-    """``{calibration label: reason}`` for UNRELIABLE calibrations, excluded from pooled
-    calibration fits while ``config.APPLY_BLOCK_RULE`` is True."""
-    if not getattr(C, "APPLY_BLOCK_RULE", False):
-        return {}
+    """``{calibration label: reason}`` for calibrations excluded from pooled calibration
+    fits: those of an excluded participant (:func:`excluded_participants`), and the
+    UNRELIABLE ones while ``config.APPLY_BLOCK_RULE`` is True."""
     gate = load_gate(bids_dir)
     if gate.empty:
         return {}
-    hit = gate[(gate["unit"] == "calibration") & (gate["rule_exclude"].str.lower() == "true")]
-    return {r["recording"]: f"calibration rule: {r['rule']}" for _, r in hit.iterrows()}
+    cal = gate[gate["unit"] == "calibration"]
+    out = {r["recording"]: f"manual: {r['manual']}" for _, r in cal.iterrows()
+           if r.get("manual", "-") not in ("-", "", "n/a")}
+    if getattr(C, "APPLY_BLOCK_RULE", False):
+        for _, r in cal[cal["rule_exclude"].str.lower() == "true"].iterrows():
+            out.setdefault(r["recording"], f"calibration rule: {r['rule']}")
+    return out
 
 
 def gate_id(bids_dir: Path | None = None) -> str:
@@ -483,7 +518,7 @@ def load_events(rec: Recording, presentation_rule: bool | None = None) -> pd.Dat
 
     With the presentation rule on (``config.APPLY_PRESENTATION_RULE``, or the
     ``presentation_rule`` argument), trials whose presentation window overlaps a
-    head-tracking artefact are dropped and the index is reset (``presentation.py``).
+    head-tracking artefact are dropped and the index is reset (``exclusion.py``).
     Every trial-based analysis reads events this way. QC, the gait sheets and the trial
     table pass ``presentation_rule=False`` to see every trial.
     """
@@ -494,10 +529,10 @@ def load_events(rec: Recording, presentation_rule: bool | None = None) -> pd.Dat
         presentation_rule = bool(getattr(C, "APPLY_PRESENTATION_RULE", False))
     if presentation_rule and not ev.empty:
         try:
-            from . import presentation
+            from . import exclusion
         except ImportError:
-            import presentation
-        ev = ev[presentation.valid_mask(rec, ev)].reset_index(drop=True)
+            import exclusion
+        ev = ev[exclusion.valid_mask(rec, ev)].reset_index(drop=True)
     return ev
 
 
@@ -509,11 +544,10 @@ DERIVATIVE_GROUPS = {
         "qc": "One QC sheet per block: head position raw vs cleaned with the size of every "
               "correction, belt speed, target onsets and accuracy by level; frame timing, "
               "tracking and vigilance in the JSON (qc.py). Also the exclusion gate, the "
-              "N per stage, and the presentation flags of every trial (block_rules.py, "
-              "presentation.py).",
+              "N per stage, and the presentation flags of every trial (exclusion.py).",
         "calibration": "QUEST+ calibration per condition and visit: staircase figures, "
                        "reliability checks, and the offline slope/lapse refit "
-                       "(calibration.py, calibration_refit.py).",
+                       "(calibration.py).",
         "gait": "Steps and stride phase per walking block: one gait sheet per block (stride "
                 "template and durations, head path with the onsets, stance-foot decode), "
                 "time series in the .npz (gait.py).",
@@ -521,22 +555,19 @@ DERIVATIVE_GROUPS = {
     "Tables for further analysis": {
         "trial_table": "Every trial of every block in one table: design, response, RT "
                        "validity, stride phase and stance foot at onset, and the exclusion "
-                       "gate's decisions (trial_table.py).",
+                       "gate's decisions (tables.py).",
         "step_table": "Every step of every walking block in one table: duration, stance "
-                      "foot and its evidence, head sway and bob over the step "
-                      "(step_table.py).",
+                      "foot and its evidence, head sway and bob over the step (tables.py).",
     },
     "Confirmatory and secondary tests": {
         "phase": "Stride-phase modulation of accuracy (answered trials), reaction time and the "
-                 "timeout rate: one sheet per walking block, the per-participant "
-                 "confirmatory 2 and 4 cps tests, and the pooled "
-                 "exploratory aggregate (phase_analysis.py).",
-        "population": "Group-level tests across participants: phase-agnostic test, common "
-                      "phase, GLMM, prevalence (group_agnostic.py, common_phase.py, glmm.py, "
-                      "population.py).",
-        "conditions": "Standing versus walking: accuracy (answered trials), reaction time "
-                      "and thresholds "
-                      "(conditions.py, threshold_by_condition.py).",
+                 "timeout rate: one sheet per walking block, the per-participant confirmatory "
+                 "2 and 4 cps tests, and the pooled exploratory aggregate (phase_analysis.py).",
+        "population": "Group-level tests across participants: the confirmatory phase-agnostic "
+                      "test, the common-phase Hotelling test, prevalence and preferred phase, "
+                      "stride-duration controls (population.py).",
+        "conditions": "Standing versus walking: accuracy (answered trials), reaction time and "
+                      "thresholds (conditions.py).",
         "clocktime": "Control analysis on clock time instead of stride phase, one figure per "
                      "block (clocktime_control.py).",
         "bayes_glmm": "Bayesian mixed models (NumPyro) of stride phase on accuracy and log "
@@ -553,55 +584,47 @@ DERIVATIVE_GROUPS = {
         "calibration_transfer": "Whether each calibrated threshold holds in the blocks "
                                 "run on it: accuracy at the calibrated tilt and the "
                                 "blocks' own threshold against a sampling null "
-                                "(calibration_transfer.py).",
+                                "(conditions.py).",
     },
     "Exploratory: responses over the stride": {
-        "onset_response": "Responses locked to stimulus onset (onset_response.py).",
-        "gam_phase": "GAM fits and mutual information over stride phase (gam_phase.py).",
-        "ddm_phase": "Drift-diffusion decomposition over stride phase (ddm_phase.py).",
         "sdt": "Signal-detection measures over stride phase, at 2 and 4 cps and at the "
-               "stride rate (sdt_phase.py).",
+               "stride rate (response_bias.py).",
         "stance_foot": "Stance-foot (foot A / foot B) contrast on accuracy and RT, and the "
                        "response direction by stance foot: criterion, tilt towards vs away "
-                       "(stance_foot.py).",
+                       "(response_bias.py).",
         "roll_bias": "Head roll during presentation against the left/right response: "
                      "equivalent tilt per participant and the population tests "
-                     "(roll_bias.py).",
+                     "(response_bias.py).",
         "press_phase": "Button presses over the stride against reaction times shuffled "
                        "within blocks (press_phase.py).",
-        "press_accuracy": "Accuracy against the stride phase at the press and at onset, "
-                          "with (RT, accuracy) pairs shuffled within blocks "
-                          "(press_accuracy.py).",
         "group_curve": "The group-average-curve analysis with a per-frequency bin-resampling "
                        "null run on our walking trials, its false-positive rate on null "
                        "versions of our data, and our tests beside it (group_curve.py).",
     },
     "Exploratory: the walking itself": {
         "head_stability": "Head pitch against the vertical bob over the stride; head "
-                          "fixation point and gaze compensation (head_stability.py).",
+                          "fixation point and gaze compensation (head_motion.py).",
         "head_kinematics": "Head translation and rotation over the stride by stance foot, "
                            "with each participant's amplitude at 1 and 2 cps "
-                           "(head_kinematics.py).",
+                           "(head_motion.py).",
         "gait_dynamics": "Stride-time variability, DFA long-range correlations and local "
                          "dynamic stability per walking block (gait_dynamics.py).",
         "gait_prc": "Gait phase shifts after stimulus onsets and button presses (phase "
-                    "response curve; gait_prc.py).",
-        "gait_phase_methods": "Trough, Hilbert and multi-channel stride phase scored on "
-                              "held-out head signals (gait_phase_methods.py).",
+                    "response curve; gait_dynamics.py).",
     },
-    "Planning and summary": {
-        "planning": "Power and prevalence planning simulations (prevalence_planning.py).",
+    "Power and summary": {
         "calibration_cost": "What the calibration error costs: its structure, the "
                             "information the blocks keep, and the power of the "
                             "confirmatory and information-weighted tests at the planned "
-                            "N (calibration_cost.py).",
+                            "N (power.py).",
         "shared_power": "Power of the phase-agnostic, common-phase and pooled tests for an "
                         "oscillation shared by all participants, at the analysed and the "
-                        "planned sample (shared_power.py).",
-        "summary": "Dataset summary tables, block inventory and the HTML report (report.py).",
+                        "planned sample (power.py).",
+        "summary": "Dataset summary tables, block inventory, data-quality overview and the "
+                   "HTML report (report.py).",
         "sensitivity": "Sensitivity analyses run on demand, not by the pipeline: the "
                        "pipeline with and without the presentation rule, compared "
-                       "(presentation_comparison.py).",
+                       "(exclusion.py compare).",
     },
 }
 DERIVATIVE_FOLDERS = {k: v for group in DERIVATIVE_GROUPS.values() for k, v in group.items()}

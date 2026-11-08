@@ -58,10 +58,29 @@ PLANNED_RUNS = {"walking": {1: (1, 2, 3, 4), 2: (5, 6, 7, 8)},
 EXCLUDED_RECORDINGS: dict[str, str] = {}
 
 # Standard label for each manual exclusion above, used by the data-quality overview
-# (data_quality.py) next to the labels the automatic rule produces. One of
-# data_quality.MANUAL_LABELS; a recording missing here is labelled "Manual exclusion".
+# (report.py) next to the labels the automatic rule produces. One of
+# report.MANUAL_LABELS; a recording missing here is labelled "Manual exclusion".
 # Example: {"sub-XX_ses-02_task-ILL_acq-walking_run-NN": "Technical failure"}
 EXCLUSION_LABELS: dict[str, str] = {}
+
+# Overall rating of each participant's data by the experimenter. bidsify writes it to
+# participants.tsv (data_quality_rating); report.py lists it in the participant roster
+# (summary/participant_roster.tsv) next to the useful / partial / pending / not useful
+# status computed from the gate. One of PARTICIPANT_RATING_LEVELS; a participant not
+# listed is "unrated". With EXCLUDE_NOT_USEFUL_PARTICIPANTS on, a participant rated
+# "not useful" is left out of every analysis, gait included: the gate (exclusion.py)
+# treats all their blocks and calibrations as manual exclusions. Other ratings select
+# nothing.
+# Example: {"sub-XX": "good", "sub-YY": "not useful"}
+PARTICIPANT_RATING_LEVELS = ("very good", "good", "weak", "not useful")
+PARTICIPANT_RATINGS: dict[str, str] = {}
+EXCLUDE_NOT_USEFUL_PARTICIPANTS = True
+
+# Participants whose remaining planned visits will not be recorded, with the reason.
+# Their missing blocks are labelled "Visit cancelled" instead of "Visit pending", and
+# the roster no longer counts them as pending.
+# Example: {"sub-XX": "Visit 2 cancelled after visit 1."}
+VISITS_CANCELLED: dict[str, str] = {}
 
 # Setup-screen values logged wrongly, keyed by (subject, visit), with the reason. bidsify
 # applies them to scans.tsv, participants.tsv and the calibration beh tables; raw logs in
@@ -72,22 +91,23 @@ EXCLUSION_LABELS: dict[str, str] = {}
 #                   "reason": "The setup screen still held the previous participant's values."},
 SETUP_CORRECTIONS: dict[tuple[str, int], dict] = {}
 
-# Automatic block exclusion rule (block_rules.py): frame rate, reversal and timeouts per
+# Automatic block exclusion rule (exclusion.py): frame rate, reversal and timeouts per
 # block, chance per participant x condition, unreliable calibration. Verdicts go to
 # derivatives/qc/gate.tsv. The frame-rate check applies to every analysis; the rest to
-# behavioural analyses only, so gait analyses keep blocks answered at chance.
+# behavioural analyses only, so gait analyses keep blocks answered at chance (unless the
+# participant is rated "not useful": see EXCLUDE_NOT_USEFUL_PARTICIPANTS).
 APPLY_BLOCK_RULE = True
 BLOCK_RULE_ALPHA = 0.05
 BLOCK_RULE_MAX_TIMEOUT_FRACTION = 0.25    # exclude blocks with >= 25 % unanswered
 BLOCK_RULE_MIN_SAMPLING_HZ = 30.0         # the head node normally runs at ~60 Hz
 BLOCK_RULE_MAX_STIM_FACTOR = 2.0          # exclude blocks with median on-screen time > 2 x nominal
 
-# Presentation rule (presentation.py): a trial is dropped from every trial-based analysis
+# Presentation rule (exclusion.py): a trial is dropped from every trial-based analysis
 # when a head-tracking artefact overlaps its presentation window. The tracked head drives
 # the CAVE perspective, so a frozen or jumping pose moves the view while the Gabor is shown.
 # Window = [onset - PRE, onset + measured on-screen time + POST]. The values were fixed
 # before data collection was complete and must not be tuned to results.
-# ILL_PRESENTATION_RULE=0 turns the rule off (presentation_comparison.py uses this).
+# ILL_PRESENTATION_RULE=0 turns the rule off (exclusion.py uses this).
 APPLY_PRESENTATION_RULE = os.environ.get("ILL_PRESENTATION_RULE", "1") not in ("0", "false", "no")
 PRESENTATION_PRE_S = 0.30         # lead: the render eye is smoothed at 1.8 Hz (~0.3 s to settle)
 PRESENTATION_POST_S = 0.10        # margin after the Gabor's measured offset
@@ -106,14 +126,9 @@ RESPONSE_WINDOW_S = 2.0    # responseWindow (lowered from 3 s; RTs are ~0.8-0.9 
 #   "trough"  -> linear interpolation between double-support troughs (Davidson).
 #   "hilbert" -> continuous analytic-signal phase; independent of trough detection, origin
 #                from lateral sway (no half-stride ambiguity).
-#   "phaser"  -> multi-channel phase (vertical bob, lateral sway, head roll; phaser.py,
-#                after Revzen & Guckenheimer 2008). 2-3x lower error than one channel on
-#                synthetic data, but no better on real head data (no more held-out variance
-#                than troughs, slipped cycles). Compared in gait_phase_methods.py; not
-#                recommended.
-# gait.py saves all three; this picks the one all stages bin on. The confirmatory analysis
+# gait.py saves both; this picks the one all stages bin on. The confirmatory analysis
 # uses "trough", as specified in the design.
-PHASE_METHOD = "trough"      # "trough" (confirmatory) | "hilbert" | "phaser" (multi-channel)
+PHASE_METHOD = "trough"      # "trough" (confirmatory) | "hilbert"
 
 # Local head positions further than this (m) from the median are treated as dropouts or
 # pre-initialisation samples (e.g. the -505 frames at the start).
@@ -218,11 +233,11 @@ def session_for(ids: dict) -> str:
 # +y up, +z FORWARD.
 # Rotation: ``head_mocap_quat_*`` is the NatNet quaternion as Motive streams it, in
 # Motive's right-handed frame: x right, y up, z BACKWARD. The rotation vector the analysis
-# works with (``head_stability.rotation_on_grid``) is in that frame, so
+# works with (``head_motion.rotation_on_grid``) is in that frame, so
 #   * roll  = rotation about +z (backward):  positive = right ear up;
 #   * pitch = rotation about the step-rate axis near x, oriented towards -x
-#             (``head_stability.pitch_axis``):  positive = nose down;
-#   * yaw   = rotation about -y (``head_kinematics``):  positive = turn to the right.
+#             (``head_motion.pitch_axis``):  positive = nose down;
+#   * yaw   = rotation about -y (``head_motion``):  positive = turn to the right.
 # The rig check measured every one of these on a scripted performer (``rigcheck/``): a
 # shift, a single-leg stance and the first single support of a walk all put +x on the
 # right; a step forward is +z locally and -z in Motive; a chin-down nod, an ear to the
@@ -243,7 +258,7 @@ HEAD_ROLL_SIGN_VERIFIED = True      # rig_check: right / left ear to the shoulde
 
 
 # --- Outcome measures and multiplicity -------------------------------------
-# Holm in ``phase_analysis`` / ``group_agnostic`` corrects over the two confirmatory
+# Holm in ``phase_analysis`` / ``population`` corrects over the two confirmatory
 # frequencies (2 and 4 cps) within a measure, not across measures. Each additional
 # confirmatory measure would inflate the family-wise error rate.
 #

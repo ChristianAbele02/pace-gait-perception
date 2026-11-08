@@ -24,21 +24,13 @@ sys.path.insert(0, str(ROOT))
 import phase_analysis as pa          # noqa: E402
 import clocktime_control as ctc      # noqa: E402
 import gait as gait_mod              # noqa: E402
-import glmm                          # noqa: E402
 import population as pop             # noqa: E402
-import calibration_refit as cr       # noqa: E402
-import calibration as cal            # noqa: E402
+import calibration as cal       # noqa: E402
 import clean as clean_mod            # noqa: E402
 import config as C                   # noqa: E402
 import bidsify                       # noqa: E402
 import report                        # noqa: E402
-import onset_response as orr         # noqa: E402
-import gam_phase as gp               # noqa: E402
-import ddm_phase as dp               # noqa: E402
-import group_agnostic as ga          # noqa: E402
-import common_phase as cph          # noqa: E402
-import stance_foot as sfoot          # noqa: E402
-import sdt_phase as sdt            # noqa: E402
+import response_bias as rbias        # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -71,53 +63,6 @@ def test_phase_null_false_positive_rate_controlled():
         res = pa.analyse_measure(phase, correct, "mean", nperm=300)
         hits += bool(res and res["significant"])
     assert hits <= 4, f"false-positive rate too high: {hits}/{trials}"
-
-
-# ---------------------------------------------------------------------------
-# Hierarchical GLMM: recovers a population effect, controls the null
-# ---------------------------------------------------------------------------
-def _sim_glmm(amp_logit, n_sub=8, n=250, seed=0):
-    rng = np.random.default_rng(seed)
-    w = 2 * np.pi * 2.0 / 100.0
-    frames = []
-    for s in range(n_sub):
-        u = rng.normal(0, 0.3)
-        ph = rng.uniform(0, 100, n)
-        p = 1 / (1 + np.exp(-(0.4 + u + amp_logit * np.cos(w * ph + 0.5))))
-        c = (rng.uniform(size=n) < p).astype(float)
-        frames.append(pd.DataFrame({"sub": f"sub-{s:02d}", "phase": ph, "correct": c}))
-    return pd.concat(frames, ignore_index=True)
-
-
-def test_glmm_recovers_population_oscillation():
-    """The mixed model recovers a known population amplitude to within 0.15 logit using
-    the mixed (not fallback) estimator. Estimation only; the GLMM has no test."""
-    fit = glmm.fit_population(_sim_glmm(0.6, seed=1))
-    assert fit["n_participants"] == 8
-    assert "MixedGLM" in fit["method"]
-    assert abs(fit["amp_logit"] - 0.6) < 0.15, f"amp off: {fit['amp_logit']}"
-
-
-def test_glmm_reports_no_p_values():
-    """The removed Wald test must not come back in any GLMM output."""
-    fit = glmm.fit_population(_sim_glmm(0.6, seed=1))
-    banned = {"p_value", "significant", "wald_chi2_df2"}
-    assert not (banned & set(fit)), f"GLMM re-introduced a test: {banned & set(fit)}"
-    assert "descriptive" in fit["inference"].lower()
-    assert not hasattr(glmm, "_wald"), "the joint Wald helper is back"
-    fd = glmm.fit_difficulty_model(
-        _sim_glmm(0.5, seed=3).assign(condition="walking", difficulty="THR"))
-    if fd:
-        for lev in fd["by_difficulty"].values():
-            assert not (banned & set(lev)), "difficulty model re-introduced a test"
-    cm = glmm.fit_condition_model(
-        pd.concat([_sim_glmm(0.5, seed=4).assign(condition="walking", difficulty="THR"),
-                   _sim_glmm(0.0, seed=5).assign(condition="standing", difficulty="THR")],
-                  ignore_index=True))
-    if cm:
-        for block in ("locomotion_effect", "standing_oscillation_control",
-                      "walking_specific_oscillation"):
-            assert not (banned & set(cm[block])), f"{block} re-introduced a test"
 
 
 # ---------------------------------------------------------------------------
@@ -194,21 +139,21 @@ def test_calibration_refit_simulation_at_rig_design():
     """At the rig's design the joint refit recovers a free lapse (better with the catch
     trials), overestimates the slope from ~50 trials per calibration, and fixing the
     lapse above the truth inflates the slope further."""
-    rec = cr.simulation_study(n_reps=4, n_calibrations=(24,), true_slope=3.0,
+    rec = cal.simulation_study(n_reps=4, n_calibrations=(24,), true_slope=3.0,
                               true_lapse=0.01, seed=7)
     s = {r["strategy"]: r for r in rec["summary"]}
     assert abs(s["catch"]["lapse_median"] - 0.01) < 0.01
     assert s["free"]["slope_median"] > 3.0
     assert s["rig"]["slope_median"] > s["free"]["slope_median"]
-    assert s["rig"]["lapse_median"] == cr.RIG_LAPSE
+    assert s["rig"]["lapse_median"] == cal.RIG_LAPSE
 
 
 def test_fit_joint_fixed_lapse():
     """A fixed lapse is held, not fitted, and still gives a usable slope."""
     obs = _sim_cond_observers(3.5, n_part=8, seed=11)
-    fixed = cr.fit_joint(obs, lapse=0.03)
+    fixed = cal.fit_joint(obs, lapse=0.03)
     assert fixed["ok"] and fixed["lapse"] == 0.03
-    assert abs(fixed["slope_beta"] - cr.fit_joint(obs)["slope_beta"]) < 1.5
+    assert abs(fixed["slope_beta"] - cal.fit_joint(obs)["slope_beta"]) < 1.5
 
 
 def _sim_cond_observers(slope, n_part=10, n_trials=90, seed=0):
@@ -219,21 +164,21 @@ def _sim_cond_observers(slope, n_part=10, n_trials=90, seed=0):
         alpha = float(max(1.0, rng.normal(5.0, 1.0)))
         levels = alpha * np.geomspace(0.4, 2.2, 7)
         x = rng.choice(levels, size=n_trials)
-        p = cr.weibull(x, alpha, slope, 0.03)
+        p = cal.weibull(x, alpha, slope, 0.03)
         out.append((x, (rng.uniform(size=n_trials) < p).astype(float)))
     return out
 
 
 def test_slope_invariance_lrt():
     """Equal slopes across conditions -> n.s.; clearly different slopes -> detected."""
-    same = cr.fit_slope_invariance({"standing": _sim_cond_observers(3.5, seed=1),
+    same = cal.fit_slope_invariance({"standing": _sim_cond_observers(3.5, seed=1),
                                     "walking": _sim_cond_observers(3.5, seed=2)})
     assert same["ok"] and same["p_value"] > 0.05, f"equal slopes flagged (p={same['p_value']})"
-    diff = cr.fit_slope_invariance({"standing": _sim_cond_observers(5.0, seed=3),
+    diff = cal.fit_slope_invariance({"standing": _sim_cond_observers(5.0, seed=3),
                                     "walking": _sim_cond_observers(1.5, seed=4)})
     assert diff["ok"] and diff["slope_differs"], f"clear slope difference missed (p={diff['p_value']})"
     # needs >=2 conditions
-    assert not cr.fit_slope_invariance({"standing": _sim_cond_observers(3.0, seed=5)})["ok"]
+    assert not cal.fit_slope_invariance({"standing": _sim_cond_observers(3.0, seed=5)})["ok"]
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +441,7 @@ def test_data_quality_labels_and_counts():
     """Each exclusion gets one standard label (manual first, then reversal, timeouts,
     chance), kept trials are the answered trials of kept blocks, and planned runs
     without a recording are 'Not recorded' or, after the last visit, 'Visit pending'."""
-    import data_quality as dq
+    import report
     rec = "sub-01_ses-02_task-ILL_acq-walking_run-{:02d}"
     def row(run, beh, rule="pass", manual="-", answered=160, correct=120):
         return dict(unit="block", recording=rec.format(run), participant="sub-01",
@@ -515,7 +460,7 @@ def test_data_quality_labels_and_counts():
              manual="-", behaviour="exclude", gait="n/a"),
     ])
     planned = {"walking": {1: (1, 2, 3, 4), 2: (5, 6)}}
-    units = dq.unit_rows(gate, {rec.format(r): 5 for r in (1, 2, 3)}, planned,
+    units = report.unit_rows(gate, {rec.format(r): 5 for r in (1, 2, 3)}, planned,
                          {rec.format(3): "Technical failure"})
     lab = dict(zip(units["recording"] + "/" + units["run"].astype(str), units["label"]))
     assert lab[rec.format(1) + "/1"] == "-"
@@ -523,11 +468,67 @@ def test_data_quality_labels_and_counts():
     assert lab[rec.format(3) + "/3"] == "Technical failure"
     missing = units[units["status"] == "missing"].set_index("run")["label"].to_dict()
     assert missing == {4: "Not recorded", 5: "Visit pending", 6: "Visit pending"}
-    tot = dq.summary_rows(units).query("level == 'total'").iloc[0]
+    tot = report.summary_rows(units).query("level == 'total'").iloc[0]
     assert (tot["blocks_recorded"], tot["blocks_kept"], tot["blocks_missing"]) == (3, 1, 3)
     assert (tot["trials_recorded"], tot["trials_kept"]) == (510, 160)
     assert tot["timeouts_in_kept_blocks"] == 10 and tot["calibrations_kept"] == 0
-    assert "## Labels" in dq.markdown(units, dq.summary_rows(units))
+    assert "## Labels" in report.markdown(units, report.summary_rows(units))
+
+
+def test_participant_roster_status():
+    """The roster marks a participant useful only with every planned block recorded and
+    kept, pending while a visit is to come, partial after a lost block or a cancelled
+    visit, and not useful with no block kept or a "not useful" rating."""
+    import report
+    planned = {"walking": {1: (1, 2), 2: (3, 4)}}
+
+    def gate_for(sub, runs, excluded=()):
+        return [dict(unit="block", participant=sub, condition="walking",
+                     recording=f"{sub}_ses-02_task-ILL_acq-walking_run-{r:02d}",
+                     visit="1" if r <= 2 else "2", n_trials="170", n_answered="160",
+                     n_correct="120", rule="chance: x" if r in excluded else "pass",
+                     manual="-", behaviour="exclude" if r in excluded else "include",
+                     gait="include") for r in runs]
+    gate = pd.DataFrame(gate_for("sub-01", (1, 2, 3, 4)) + gate_for("sub-02", (1, 2))
+                        + gate_for("sub-03", (1, 2)) + gate_for("sub-04", (1, 2, 3, 4), (3,))
+                        + gate_for("sub-05", (1, 2), (1, 2)) + gate_for("sub-06", (1, 2, 3, 4)))
+    units = report.unit_rows(gate, {}, planned, {}, cancelled={"sub-03": "stopped"})
+    assert set(units.loc[units["participant"] == "sub-03", "label"]) == {"-", "Visit cancelled"}
+    roster = report.roster_rows(units, {"sub-06": "not useful", "sub-01": "very good"})
+    status = dict(zip(roster["participant"], roster["status"]))
+    assert status == {"sub-01": "useful", "sub-02": "pending", "sub-03": "partial",
+                      "sub-04": "partial", "sub-05": "not useful", "sub-06": "not useful"}
+    rating = dict(zip(roster["participant"], roster["rating"]))
+    assert rating["sub-01"] == "very good" and rating["sub-02"] == "unrated"
+    assert set(roster["status"]) <= set(report.STATUS_LEVELS)
+    assert "## Participant roster" in report.markdown(units, report.summary_rows(units), roster=roster)
+
+
+def test_not_useful_participants_are_excluded(monkeypatch, tmp_path):
+    """A participant rated "not useful" is a manual exclusion in every scope while the
+    switch is on, and the data-quality overview labels it 'Participant not useful'."""
+    import bids_io
+    import report
+    monkeypatch.setattr(C, "PARTICIPANT_RATINGS", {"sub-01": "good", "sub-02": "not useful"})
+    monkeypatch.setattr(C, "EXCLUDE_NOT_USEFUL_PARTICIPANTS", True)
+    monkeypatch.setattr(C, "EXCLUDED_RECORDINGS", {})
+    assert bids_io.excluded_participants() == {"sub-02": bids_io.NOT_USEFUL_REASON}
+    for sub in ("sub-01", "sub-02"):
+        d = tmp_path / sub / "ses-02" / "motion"
+        d.mkdir(parents=True)
+        (d / f"{sub}_ses-02_task-ILL_tracksys-optitrack_acq-walking_run-01_motion.tsv").touch()
+    for scope in ("behaviour", "gait"):
+        out = bids_io.excluded_recordings(tmp_path, apply_block_rule=False, scope=scope)
+        assert list(out) == ["sub-02_ses-02_task-ILL_acq-walking_run-01"]
+    gate = pd.DataFrame([dict(unit="block", participant="sub-02", condition="walking",
+                              recording="sub-02_ses-02_task-ILL_acq-walking_run-01",
+                              visit="1", n_trials="170", n_answered="160", n_correct="120",
+                              rule="pass", manual=bids_io.NOT_USEFUL_REASON,
+                              behaviour="exclude", gait="exclude")])
+    units = report.unit_rows(gate, {}, {"walking": {1: (1,)}}, {}, {})
+    assert units.loc[0, "label"] == "Participant not useful"
+    monkeypatch.setattr(C, "EXCLUDE_NOT_USEFUL_PARTICIPANTS", False)
+    assert bids_io.excluded_participants() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -586,104 +587,6 @@ def _osc_binary(rng, phase, pref_pct, amp, base=0.75, freq=2.0):
     return (rng.uniform(size=phase.size) < p).astype(float)
 
 
-def _dissoc_trials(rng, n, pref_acc, pref_resp, freq=2.0):
-    ph = rng.uniform(0, 100, n)
-    acc = _osc_binary(rng, ph, pref_acc, 0.10, 0.75, freq)
-    responded = _osc_binary(rng, ph, pref_resp, 0.12, 0.88, freq)
-    r = responded == 1
-    return dict(onset_phase=ph, acc=acc, responded=responded, logrt_onset=np.full(n, np.nan),
-                resp_onset_phase=ph[r], resp_response_phase=(ph[r] + 60) % 100,
-                resp_logrt=np.log10(rng.uniform(0.5, 0.9, int(r.sum()))), stride_period=1.11)
-
-
-def test_onset_response_recovers_dissociation():
-    """Accuracy and P(respond) peaking at different onset phases: Δψ CI excludes 0."""
-    rng = np.random.default_rng(4)
-    tr = _dissoc_trials(rng, 4000, pref_acc=20.0, pref_resp=40.0)
-    res = orr.dissociation(tr, freq=2.0, nboot=400, rng=rng)
-    assert res["dissociation"], f"missed a real dissociation (CI {np.degrees(res['delta_psi_ci_rad'])})"
-    assert abs(res["acc_pref_pct"] - 20) < 8 and abs(res["respond_pref_pct"] - 40) < 8
-
-
-def test_onset_response_null_no_dissociation():
-    """Both measures peaking at the same phase: Δψ ~ 0 and the CI includes 0."""
-    rng = np.random.default_rng(5)
-    tr = _dissoc_trials(rng, 4000, pref_acc=30.0, pref_resp=30.0)
-    res = orr.dissociation(tr, freq=2.0, nboot=400, rng=rng)
-    assert not res["dissociation"], f"spurious dissociation (Δψ={np.degrees(res['delta_psi_rad']):.0f}°)"
-
-
-# ---------------------------------------------------------------------------
-# Exploratory: cyclic-spline GAM + mutual information
-# ---------------------------------------------------------------------------
-def _gam_df(kind, seed, n_sub=6, n=300):
-    rng = np.random.default_rng(seed)
-    frames = []
-    for s in range(n_sub):
-        u = rng.normal(0, 0.3)
-        ph = rng.uniform(0, 100, n)
-        if kind == "peaked":                      # narrow good window (non-sinusoidal)
-            d = (((ph - 25 + 50) % 100) - 50)
-            lin = 0.3 + u + 1.7 * np.exp(-0.5 * (d / 8.0) ** 2)
-        else:                                     # flat null
-            lin = 1.0 + u
-        p = 1 / (1 + np.exp(-lin))
-        c = (rng.uniform(size=n) < p).astype(float)
-        frames.append(pd.DataFrame({"sub": f"sub-{s:02d}", "phase": ph, "correct": c, "logrt": np.nan}))
-    return pd.concat(frames, ignore_index=True)
-
-
-def test_gam_detects_nonsinusoidal_shape():
-    """The cyclic-spline GAM detects a non-sinusoidal modulation that a single cosine
-    would understate."""
-    g = gp.fit_gam(_gam_df("peaked", 7), "correct", binomial=True)
-    assert g["significant"], f"GAM missed a real phase effect (p={g['p_value']})"
-    assert g["prefers_gam_over_cosine"], "GAM should beat a single cosine on a peaked profile"
-
-
-def test_gam_null_not_significant():
-    """The GAM does not flag a flat stride profile."""
-    g = gp.fit_gam(_gam_df("null", 8), "correct", binomial=True)
-    assert not g["significant"], f"GAM flagged a null (p={g['p_value']})"
-
-
-def test_mutual_info_detects_and_controls_null():
-    """Mutual information between stride phase and accuracy detects a real dependency and
-    stays at its nominal level under the null."""
-    rng = np.random.default_rng(9)
-    n = 2500
-    w = 2 * np.pi * 2 / 100.0
-    ph = rng.uniform(0, 100, n)
-    acc = (rng.uniform(size=n) < np.clip(0.75 + 0.12 * np.cos(w * (ph - 25)), 0.02, 0.99)).astype(float)
-    hit = gp.mutual_info_perm(ph, acc, y_binary=True, nperm=300, rng=rng)
-    assert hit["significant"] and hit["mi_debiased_bits"] > 0, f"MI missed a real dependence ({hit})"
-    accn = (rng.uniform(size=n) < 0.75).astype(float)
-    nul = gp.mutual_info_perm(ph, accn, y_binary=True, nperm=300, rng=rng)
-    assert not nul["significant"], f"MI flagged a null (p={nul['p_value']})"
-
-
-# ---------------------------------------------------------------------------
-# Exploratory: EZ-diffusion decomposition finds the drift locus
-# ---------------------------------------------------------------------------
-def test_ddm_attributes_drift_modulation_to_v():
-    """A drift-only modulation is attributed to v, not a or Ter."""
-    import simulate_participants as sim
-    rng = np.random.default_rng(10)
-    n, k = 3600, 2.0
-    ph = rng.uniform(0, 100, n)
-    correct = np.zeros(n)
-    rt = np.full(n, np.nan)
-    for i in range(n):
-        v = sim.DRIFT["THR"] * (1 + 0.30 * np.cos(2 * np.pi * k * (ph[i] / 100.0 - 0.25)))
-        c, r = sim._ddm_sample(rng, max(v, 0.02), sim.A_BOUND, sim.T0_S, max_rt=2.0)
-        if c is not None:
-            correct[i] = int(c); rt[i] = r
-    res = dp.decompose(ph, correct, rt, freq=k, nperm=400, rng=rng)
-    assert res["carrier"] == "v", f"carrier should be drift v, got {res['carrier']}"
-    assert res["params"]["v"]["significant"], "the v oscillation should be significant"
-    assert res["params"]["v"]["rel_amp"] > 3 * res["params"]["a"]["rel_amp"], "v should dominate a"
-
-
 # ---------------------------------------------------------------------------
 # Crossover counterbalance: order is data, and the H2 contrasts are unbiased
 # ---------------------------------------------------------------------------
@@ -707,35 +610,35 @@ def _cross_cells(n, cond, pos, inter, noise=0.03, seed=0):
 
 def test_crossover_contrasts_recover_injected_effects():
     """condition / position / interaction are separately recoverable and don't leak."""
-    import threshold_by_condition as tbc
-    e = tbc._crossover_model(_cross_cells(40, 0.10, 0.0, 0.0, seed=1))["effects"]
+    import conditions as cond
+    e = cond._crossover_model(_cross_cells(40, 0.10, 0.0, 0.0, seed=1))["effects"]
     assert abs(e["condition_walking_minus_standing"]["mean_log10_ratio"] - 0.10) < 0.02
     assert abs(e["position_second_minus_first"]["mean_log10_ratio"]) < 0.02
-    e = tbc._crossover_model(_cross_cells(40, 0.0, 0.12, 0.0, seed=2))["effects"]
+    e = cond._crossover_model(_cross_cells(40, 0.0, 0.12, 0.0, seed=2))["effects"]
     assert abs(e["position_second_minus_first"]["mean_log10_ratio"] - 0.12) < 0.02
     assert abs(e["condition_walking_minus_standing"]["mean_log10_ratio"]) < 0.02
-    e = tbc._crossover_model(_cross_cells(40, 0.0, 0.0, 0.15, seed=3))["effects"]
+    e = cond._crossover_model(_cross_cells(40, 0.0, 0.0, 0.15, seed=3))["effects"]
     assert abs(e["interaction_condition_x_position"]["mean_log10_ratio"] - 0.15) < 0.03
 
 
 def test_paired_threshold_pools_all_blocks_of_a_condition():
     """The paired test fits each participant's threshold to all blocks of a condition
     (as in the power analysis), not only the last block."""
-    import threshold_by_condition as tbc
+    import conditions as cond
     rng = np.random.default_rng(7)
 
     def block(alpha, n=180):
         tilt = rng.choice(np.array([0.76, 1.0, 1.26]) * alpha, size=n, p=[0.05, 0.85, 0.10])
-        return tilt, (rng.random(n) < cr.weibull(tilt, alpha, 2.5, 0.05, 0.5)).astype(float)
+        return tilt, (rng.random(n) < cal.weibull(tilt, alpha, 2.5, 0.05, 0.5)).astype(float)
 
     walking = [block(3.0), block(3.0), block(3.0), block(9.0)]   # last block deviates
     standing = [block(2.5), block(2.5)]
-    per = tbc._participant_fits({"sub-01": {"walking": walking, "standing": standing}},
+    per = cond._participant_fits({"sub-01": {"walking": walking, "standing": standing}},
                                 lambda c: (2.5, 0.05))
     w, s = per["sub-01"]["walking"], per["sub-01"]["standing"]
     assert w["n_blocks"] == 4 and w["n"] == sum(t.size for t, _ in walking)
     assert s["n_blocks"] == 2 and s["n"] == sum(t.size for t, _ in standing)
-    last_only = tbc.fit_alpha(*walking[-1], beta=2.5, lapse=0.05)
+    last_only = cond.fit_alpha(*walking[-1], beta=2.5, lapse=0.05)
     assert w["alpha_deg"] < 0.8 * last_only["alpha_deg"], (w["alpha_deg"], last_only["alpha_deg"])
     assert 2.5 < w["alpha_deg"] < 9.0
 
@@ -743,13 +646,13 @@ def test_paired_threshold_pools_all_blocks_of_a_condition():
 def test_crossover_contrasts_false_positive_rate_controlled():
     """With no true condition or position effect, the crossover contrasts hold their
     nominal false-positive rate."""
-    import threshold_by_condition as tbc
+    import conditions as cond
     keys = ("condition_walking_minus_standing", "position_second_minus_first",
             "interaction_condition_x_position")
     hits = dict.fromkeys(keys, 0)
     n = 200
     for s in range(n):
-        e = tbc._crossover_model(_cross_cells(16, 0, 0, 0, seed=100 + s))["effects"]
+        e = cond._crossover_model(_cross_cells(16, 0, 0, 0, seed=100 + s))["effects"]
         for k in keys:
             hits[k] += e[k]["significant"]
     for k in keys:
@@ -908,7 +811,7 @@ def test_agnostic_coefficients_match_fit_one():
 def test_agnostic_recovers_incoherent_population():
     """A real effect at individual phases is detected."""
     obs, null = _agnostic_cohort(amp=0.10, seed=11)
-    r = ga.agnostic_test(obs, null)
+    r = pop.agnostic_test(obs, null)
     assert r["p_value"] < 0.05, f"missed a real incoherent effect (p={r['p_value']})"
 
 
@@ -916,7 +819,7 @@ def test_agnostic_beats_common_phase_test_when_phases_scatter():
     """With evenly spread phases the vector mean cancels: a common-phase contrast misses
     the effect, the phase-agnostic statistic detects it (15 % vs 91 % power in the design)."""
     obs, null = _agnostic_cohort(amp=0.10, seed=12, phases="spread")
-    p_agnostic = ga.agnostic_test(obs, null)["p_value"]
+    p_agnostic = pop.agnostic_test(obs, null)["p_value"]
     # common-phase analogue: vector mean against the same permutations
     stat = float((obs.mean(axis=0) ** 2).sum())
     null_mean = (null.mean(axis=0) ** 2).sum(axis=1)
@@ -931,7 +834,7 @@ def test_agnostic_null_false_positive_rate_controlled():
     hits, reps = 0, 30
     for s in range(reps):
         obs, null = _agnostic_cohort(amp=0.0, n_sub=6, n=300, nperm=200, seed=500 + s)
-        hits += ga.agnostic_test(obs, null)["p_value"] < 0.05
+        hits += pop.agnostic_test(obs, null)["p_value"] < 0.05
     assert hits <= 5, f"false-positive rate too high: {hits}/{reps}"
 
 
@@ -1080,7 +983,7 @@ def _foot_trials(seed, n_strides=800, delta=0.0, step_amp=0.0, base=0.75):
 def test_stance_foot_recovers_injected_asymmetry():
     """A real difference between the two feet is detected at the right size and sign."""
     acc, foot, stride = _foot_trials(1, delta=0.10)
-    r = sfoot.stance_contrast(acc, foot, stride, n_perm=2000,
+    r = rbias.stance_contrast(acc, foot, stride, n_perm=2000,
                               rng=np.random.default_rng(1))
     assert r["p"] < 0.01, f"missed a 10 pp foot asymmetry (p={r['p']:.3f})"
     assert abs(r["delta"] - 0.10) < 0.03, f"effect size off: {r['delta']:+.3f}"
@@ -1088,7 +991,7 @@ def test_stance_foot_recovers_injected_asymmetry():
 
 def test_stance_foot_null_false_positive_rate_controlled():
     """With no foot effect the stride-flip permutation must not over-reject."""
-    ps = np.array([sfoot.stance_contrast(*_foot_trials(9000 + i, n_strides=400),
+    ps = np.array([rbias.stance_contrast(*_foot_trials(9000 + i, n_strides=400),
                                          n_perm=500, rng=np.random.default_rng(i))["p"]
                    for i in range(120)])
     assert (ps < 0.05).mean() <= 0.12, f"inflated false-positive rate {(ps < 0.05).mean():.3f}"
@@ -1097,7 +1000,7 @@ def test_stance_foot_null_false_positive_rate_controlled():
 def test_stance_foot_immune_to_within_step_oscillation():
     """Flipping whole strides keeps within-step phase, so a strong 2-cps oscillation
     without a foot difference does not produce a stance-foot effect."""
-    ps = np.array([sfoot.stance_contrast(*_foot_trials(500 + i, n_strides=400, step_amp=0.18),
+    ps = np.array([rbias.stance_contrast(*_foot_trials(500 + i, n_strides=400, step_amp=0.18),
                                          n_perm=500, rng=np.random.default_rng(i))["p"]
                    for i in range(120)])
     assert (ps < 0.05).mean() <= 0.12, \
@@ -1108,23 +1011,22 @@ def test_stance_foot_population_agnostic_detects_scattered_directions():
     """Opposite asymmetries cancel in the common-direction test but are detected by the
     direction-agnostic test."""
     deltas = [0.06, -0.06] * 4
-    res = [sfoot.stance_contrast(*_foot_trials(3000 + 17 * i, n_strides=700, delta=d),
+    res = [rbias.stance_contrast(*_foot_trials(3000 + 17 * i, n_strides=700, delta=d),
                                  n_perm=1500, rng=np.random.default_rng(400 + i))
            for i, d in enumerate(deltas)]
-    p = sfoot.population_test([r["_null"] for r in res], [r["delta"] for r in res])
+    p = rbias.population_test([r["_null"] for r in res], [r["delta"] for r in res])
     assert p["agnostic_p"] < 0.01, f"agnostic test missed scattered asymmetries ({p['agnostic_p']:.3f})"
     assert p["common_p"] > 0.05, f"common-direction test fired on cancelling effects ({p['common_p']:.3f})"
 
 
 def test_stance_foot_population_null_controlled():
     """No asymmetry: neither population test is significant."""
-    res = [sfoot.stance_contrast(*_foot_trials(7000 + 13 * i, n_strides=500),
+    res = [rbias.stance_contrast(*_foot_trials(7000 + 13 * i, n_strides=500),
                                  n_perm=1000, rng=np.random.default_rng(800 + i))
            for i in range(10)]
-    p = sfoot.population_test([r["_null"] for r in res], [r["delta"] for r in res])
+    p = rbias.population_test([r["_null"] for r in res], [r["delta"] for r in res])
     assert p["agnostic_p"] > 0.05 and p["common_p"] > 0.05, \
         f"population test fired on a null (agnostic {p['agnostic_p']:.3f}, common {p['common_p']:.3f})"
-
 
 
 # ---------------------------------------------------------------------------
@@ -1132,12 +1034,6 @@ def test_stance_foot_population_null_controlled():
 #     Both only reduce variance: they must not change the null, nor the result when
 #     there is nothing to correct.
 # ---------------------------------------------------------------------------
-def _binned_curve(seed, n=1200, amp=0.0, freq=2.0, nbins=40):
-    """Trial-level (phase, accuracy) with an optional injected oscillation."""
-    r = np.random.default_rng(seed)
-    ph = r.uniform(0, 100, n)
-    p = 0.75 + amp * np.cos(2 * np.pi * freq * ph / 100.0)
-    return ph, (r.random(n) < p).astype(float)
 
 
 def test_weighted_fit_equals_unweighted_when_bins_are_equal():
@@ -1273,7 +1169,7 @@ def test_agnostic_statistic_is_studentised():
     """With noise scales spanning 5x, the studentised null mean is close to n."""
     scales = np.array([1.0] * 9 + [5.0])
     obs, null = _coef_set(31, scales=scales, amp=0.0, n_perm=800)
-    r = ga.agnostic_test(obs, null)
+    r = pop.agnostic_test(obs, null)
     # ~1 per participant under H0, so S ~ n
     assert abs(r["null_mean"] - r["n_participants"]) < 0.35 * r["n_participants"], \
         f"studentised null mean {r['null_mean']:.2f} not near n={r['n_participants']}"
@@ -1289,7 +1185,7 @@ def test_agnostic_studentisation_helps_when_participants_are_unequal():
     reps = 120
     for i in range(reps):
         obs, null = _coef_set(2000 + i, scales=scales, amp=0.55, n_perm=400)
-        hits_st += ga.agnostic_test(obs, null)["p_value"] < 0.05
+        hits_st += pop.agnostic_test(obs, null)["p_value"] < 0.05
         # raw-sum reference
         raw = float((obs ** 2).sum())
         raw_null = (null ** 2).sum(axis=(0, 2))
@@ -1305,7 +1201,7 @@ def test_agnostic_studentised_null_false_positive_rate_controlled():
     reps = 300
     for i in range(reps):
         obs, null = _coef_set(4000 + i, scales=scales, amp=0.0, n_perm=400)
-        hits += ga.agnostic_test(obs, null)["p_value"] < 0.05
+        hits += pop.agnostic_test(obs, null)["p_value"] < 0.05
     fpr = hits / reps
     assert 0.01 <= fpr <= 0.10, f"studentised FPR {fpr:.3f} outside [0.01, 0.10]"
 
@@ -1313,10 +1209,10 @@ def test_agnostic_studentised_null_false_positive_rate_controlled():
 def test_one_primary_measure_is_declared():
     """Exactly one primary measure (accuracy, as in the power analysis)."""
     assert C.PRIMARY_MEASURE == "accuracy"
-    assert ga.PRIMARY == C.PRIMARY_MEASURE
-    assert ga.MEASURES[0] == C.PRIMARY_MEASURE, "primary must be reported first"
+    assert pop.PRIMARY == C.PRIMARY_MEASURE
+    assert pop.MEASURES[0] == C.PRIMARY_MEASURE, "primary must be reported first"
     assert C.PRIMARY_MEASURE not in C.SECONDARY_MEASURES
-    assert set(ga.MEASURES) == {C.PRIMARY_MEASURE} | set(C.SECONDARY_MEASURES)
+    assert set(pop.MEASURES) == {C.PRIMARY_MEASURE} | set(C.SECONDARY_MEASURES)
 
 
 # ---------------------------------------------------------------------------
@@ -1337,7 +1233,7 @@ def _sdt_trials(seed, n=1080, amp_d=0.0, amp_c=0.0, freq=2.0, d0=1.2, c0=0.2):
 def test_sdt_recovers_known_dprime_and_criterion():
     """d' and criterion estimates match the simulated values."""
     ph, sig, said = _sdt_trials(1, n=200000, d0=1.4, c0=0.35)
-    _, dp, cr, _, _, _, _ = sdt.sdt_bins(ph, sig, said, nbins=1, min_n=0)
+    _, dp, cr, _, _, _, _ = rbias.sdt_bins(ph, sig, said, nbins=1, min_n=0)
     assert abs(dp[0] - 1.4) < 0.03, f"d' off: {dp[0]:.3f}"
     assert abs(cr[0] - 0.35) < 0.03, f"criterion off: {cr[0]:.3f}"
 
@@ -1349,23 +1245,23 @@ def test_sdt_inverse_normal_is_accurate():
     except Exception:                                     # pragma: no cover
         return
     p = np.linspace(1e-5, 1 - 1e-5, 5001)
-    assert np.max(np.abs(sdt._z(p) - norm.ppf(p))) < 1e-8
+    assert np.max(np.abs(rbias._z(p) - norm.ppf(p))) < 1e-8
 
 
 def test_sdt_separates_a_sensory_from_a_decisional_oscillation():
     """A d' oscillation appears in d' but not in the criterion, and vice versa."""
     ph, sig, said = _sdt_trials(2, amp_d=0.55, amp_c=0.0)
-    rd = sdt.analyse_measure(ph, sig, said, "dprime", nperm=400,
+    rd = rbias.analyse_measure(ph, sig, said, "dprime", nperm=400,
                              rng=np.random.default_rng(2))
-    rc = sdt.analyse_measure(ph, sig, said, "criterion", nperm=400,
+    rc = rbias.analyse_measure(ph, sig, said, "criterion", nperm=400,
                              rng=np.random.default_rng(2))
     assert rd["p_2cps_holm"] < 0.05, f"missed the sensory effect (p={rd['p_2cps_holm']:.3f})"
     assert rc["p_2cps_holm"] > 0.05, f"sensory effect leaked into criterion (p={rc['p_2cps_holm']:.3f})"
 
     ph, sig, said = _sdt_trials(3, amp_d=0.0, amp_c=0.40)
-    rd = sdt.analyse_measure(ph, sig, said, "dprime", nperm=400,
+    rd = rbias.analyse_measure(ph, sig, said, "dprime", nperm=400,
                              rng=np.random.default_rng(3))
-    rc = sdt.analyse_measure(ph, sig, said, "criterion", nperm=400,
+    rc = rbias.analyse_measure(ph, sig, said, "criterion", nperm=400,
                              rng=np.random.default_rng(3))
     assert rc["p_2cps_holm"] < 0.05, f"missed the decisional effect (p={rc['p_2cps_holm']:.3f})"
     assert rd["p_2cps_holm"] > 0.05, f"decisional effect leaked into d' (p={rd['p_2cps_holm']:.3f})"
@@ -1377,9 +1273,9 @@ def test_sdt_null_false_positive_rate_controlled():
     reps = 150
     for i in range(reps):
         ph, sig, said = _sdt_trials(8000 + i, amp_d=0.0, amp_c=0.0, c0=0.45)
-        rd = sdt.analyse_measure(ph, sig, said, "dprime", nperm=200,
+        rd = rbias.analyse_measure(ph, sig, said, "dprime", nperm=200,
                                  rng=np.random.default_rng(i))
-        rc = sdt.analyse_measure(ph, sig, said, "criterion", nperm=200,
+        rc = rbias.analyse_measure(ph, sig, said, "criterion", nperm=200,
                                  rng=np.random.default_rng(i))
         hits_d += rd["p_2cps_holm"] < 0.05
         hits_c += rc["p_2cps_holm"] < 0.05
@@ -1388,21 +1284,21 @@ def test_sdt_null_false_positive_rate_controlled():
 
 
 def test_sdt_population_reuses_the_confirmatory_statistic():
-    """The SDT population test uses group_agnostic.agnostic_test."""
+    """The SDT population test uses population.agnostic_test."""
     rows = []
     for i in range(8):
         ph, sig, said = _sdt_trials(300 + i, amp_c=0.35)
-        rows.append({"criterion": sdt.analyse_measure(ph, sig, said, "criterion",
+        rows.append({"criterion": rbias.analyse_measure(ph, sig, said, "criterion",
                                                       nperm=300,
                                                       rng=np.random.default_rng(i)),
                      "dprime": None})
-    pop = sdt.population_test(rows)
-    assert "criterion" in pop, "population test produced nothing"
-    r = pop["criterion"]["by_freq"][2.0]
+    res = rbias.sdt_population_test(rows)
+    assert "criterion" in res, "population test produced nothing"
+    r = res["criterion"]["by_freq"][2.0]
     # same result as calling agnostic_test directly
     obs = np.array([x["criterion"]["coef_2cps"] for x in rows])
     null = np.stack([x["criterion"]["null_coef_2cps"] for x in rows])
-    ref = ga.agnostic_test(obs, null)
+    ref = pop.agnostic_test(obs, null)
     assert abs(r["statistic"] - ref["statistic"]) < 1e-12
     assert r["p_value"] == ref["p_value"]
     assert r["significant"], "population criterion oscillation not detected"
@@ -1415,7 +1311,6 @@ def test_sdt_excludes_timeouts_rather_than_scoring_them():
                         "response": ["right", "right", None, "left"]})
     keep = ev["response"].notna() & ev["stimulus_side"].notna()
     assert int(keep.sum()) == 3, "timeout row was not dropped"
-
 
 
 # ---------------------------------------------------------------------------
@@ -1446,14 +1341,14 @@ def test_hotelling_matches_the_power_analysis_implementation():
     for _ in range(60):
         n = int(rng.integers(4, 30))
         Z = rng.normal(0.2, 1.0, (n, 2))
-        worst = max(worst, abs(cph.hotelling_t2(Z)["p_value"] - power.hotelling_p(Z)))
+        worst = max(worst, abs(pop.hotelling_t2(Z)["p_value"] - power.hotelling_p(Z)))
     assert worst < 1e-12, f"diverged from davidson_power.power.hotelling_p by {worst:.2e}"
 
 
 def test_hotelling_null_false_positive_rate_controlled():
     """Nominal level without effect at the planned sample sizes."""
     for n in (8, 12, 20):
-        hits = sum(cph.hotelling_t2(np.random.default_rng(1000 + i).normal(0, 1, (n, 2)))
+        hits = sum(pop.hotelling_t2(np.random.default_rng(1000 + i).normal(0, 1, (n, 2)))
                    ["p_value"] < 0.05 for i in range(1500))
         fpr = hits / 1500
         assert 0.02 <= fpr <= 0.09, f"FPR {fpr:.3f} at N={n}"
@@ -1463,7 +1358,7 @@ def test_hotelling_survives_idiosyncratic_phases():
     """Strong oscillations at individual phases are not reported as a common-phase effect
     (the variational Wald did so 60 % of the time)."""
     for n in (12, 20):
-        hits = sum(cph.hotelling_t2(_idiosyncratic(n, 1.0, 5000 + i))["p_value"] < 0.05
+        hits = sum(pop.hotelling_t2(_idiosyncratic(n, 1.0, 5000 + i))["p_value"] < 0.05
                    for i in range(1500))
         fpr = hits / 1500
         assert fpr <= 0.10, (f"common-phase test fired on idiosyncratic phases "
@@ -1472,17 +1367,17 @@ def test_hotelling_survives_idiosyncratic_phases():
 
 def test_hotelling_detects_a_true_common_phase_effect():
     """Power against a real common-phase effect."""
-    hits = sum(cph.hotelling_t2(_coherent(20, 0.8, 9000 + i))["p_value"] < 0.05
+    hits = sum(pop.hotelling_t2(_coherent(20, 0.8, 9000 + i))["p_value"] < 0.05
                for i in range(600))
     assert hits / 600 > 0.6, f"power only {hits / 600:.2f} at N=20, amp 0.8"
 
 
 def test_hotelling_degenerate_inputs_return_p_one():
     """Too few participants or a singular covariance give p = 1."""
-    assert cph.hotelling_t2(np.zeros((3, 2)))["p_value"] == 1.0
-    assert not cph.hotelling_t2(np.zeros((3, 2)))["estimable"]
+    assert pop.hotelling_t2(np.zeros((3, 2)))["p_value"] == 1.0
+    assert not pop.hotelling_t2(np.zeros((3, 2)))["estimable"]
     same = np.tile([0.5, 0.5], (10, 1))          # zero covariance
-    assert cph.hotelling_t2(same)["p_value"] == 1.0
+    assert pop.hotelling_t2(same)["p_value"] == 1.0
 
 
 def test_paired_hotelling_is_the_difference_test():
@@ -1490,12 +1385,12 @@ def test_paired_hotelling_is_the_difference_test():
     for identical conditions."""
     rng = np.random.default_rng(3)
     a, b = rng.normal(0.3, 0.5, (16, 2)), rng.normal(0.0, 0.5, (16, 2))
-    assert cph.paired_hotelling(a, b)["p_value"] == cph.hotelling_t2(a - b)["p_value"]
+    assert pop.paired_hotelling(a, b)["p_value"] == pop.hotelling_t2(a - b)["p_value"]
     hits = 0
     for i in range(600):
         r = np.random.default_rng(700 + i)
         common = r.normal(0.4, 0.5, (14, 2))     # same oscillation in both conditions
-        hits += cph.paired_hotelling(common + r.normal(0, .3, (14, 2)),
+        hits += pop.paired_hotelling(common + r.normal(0, .3, (14, 2)),
                                      common + r.normal(0, .3, (14, 2)))["p_value"] < 0.05
     assert hits / 600 <= 0.09, f"paired test fired on identical conditions ({hits / 600:.3f})"
 
@@ -1506,19 +1401,9 @@ def test_paired_hotelling_is_the_difference_test():
 def test_response_counts_measure_is_removed():
     """Response counts stay removed (invalid in a forced-choice task; see config)."""
     assert "response_counts" not in C.SECONDARY_MEASURES
-    assert "response_counts" not in ga.MEASURES
     assert "response_counts" not in pop.MEASURES
+    assert "response_counts" not in pop.PREVALENCE_MEASURES
     assert "response_counts" not in ctc.MEASURES
-    assert "response_likelihood" not in glmm.MEASURES
-
-
-def test_difficulty_model_is_descriptive_not_a_hypothesis_test():
-    """The difficulty model is descriptive (H3 dropped: too few HARD trials)."""
-    fd = glmm.fit_difficulty_model(
-        _sim_glmm(0.5, seed=6).assign(condition="walking", difficulty="THR"))
-    if fd:
-        assert "DESCRIPTIVE ONLY" in fd["inference"]
-        assert "prediction" not in fd, "the retired H3 prediction is back"
 
 
 # ---------------------------------------------------------------------------
@@ -1837,26 +1722,25 @@ def test_calibration_transfer_recovers_threshold_and_flags_a_miss():
     """Blocks simulated from the calibrated threshold fall inside their own sampling null;
     blocks from a participant whose real threshold is twice the calibrated one fall
     outside it. A block at ceiling (above the model's 1 - lapse) is a bound only."""
-    import calibration_transfer as ct
-    import calibration_refit as cref
-    import threshold_by_condition as tbc
+    import conditions as cond
+    import calibration as cal
     rng = np.random.default_rng(3)
     t_cal = 1.0
     tilt = rng.choice([0.75, 1.0, 1.25], size=600, p=[0.05, 0.85, 0.10]) * t_cal
 
     def respond(t75):
-        alpha = t75 / ct._to_t75(1.0)
-        p = cref.weibull(tilt, alpha, tbc.BETA_FIX, tbc.LAPSE_FIX, tbc.GUESS)
+        alpha = t75 / cond._to_t75(1.0)
+        p = cal.weibull(tilt, alpha, cond.BETA_FIX, cond.LAPSE_FIX, cond.GUESS)
         return (rng.random(tilt.size) < p).astype(float)
 
-    null = ct.sampling_null(tilt, t_cal, rng, n_sim=150)
+    null = cond.sampling_null(tilt, t_cal, rng, n_sim=150)
     lo, hi = np.quantile(null, [0.025, 0.975])
     assert lo < 1.0 < hi and hi / lo < 1.6, (lo, hi)
-    same = ct.fit_threshold(tilt, respond(t_cal))
+    same = cond.fit_threshold(tilt, respond(t_cal))
     assert same["censored"] is None and lo <= same["t75"] / t_cal <= hi
-    harder = ct.fit_threshold(tilt, respond(2 * t_cal))
+    harder = cond.fit_threshold(tilt, respond(2 * t_cal))
     assert harder["t75"] / t_cal > hi and harder["lo"] > t_cal
-    ceiling = ct.fit_threshold(tilt, (rng.random(tilt.size) < 0.98).astype(float))
+    ceiling = cond.fit_threshold(tilt, (rng.random(tilt.size) < 0.98).astype(float))
     assert ceiling["censored"] == "low"
 
 
@@ -1868,7 +1752,7 @@ def test_block_rule_judges_each_block_on_frame_rate_reversal_and_timeouts():
     scopes. Chance is not judged per block."""
     import types
     import bids_io
-    import block_rules
+    import exclusion
 
     def events(k, n_wrong, n_timeout, dur=0.15):
         rc = [1.0] * k + [0.0] * n_wrong + [np.nan] * n_timeout
@@ -1876,43 +1760,43 @@ def test_block_rule_judges_each_block_on_frame_rate_reversal_and_timeouts():
                              "response_correct": [1.0] * 5 + rc,
                              "duration": dur})
 
-    old = (bids_io.load_events, bids_io.scan_meta, block_rules.calibration_verdict)
+    old = (bids_io.load_events, bids_io.scan_meta, exclusion.calibration_verdict)
     rec = types.SimpleNamespace(sub="sub-01", condition="walking", label=lambda: "x")
     try:
         bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "58.8"}
-        block_rules.calibration_verdict = lambda *a: "RELIABLE"
+        exclusion.calibration_verdict = lambda *a: "RELIABLE"
         bids_io.load_events = lambda r, **k: events(95, 57, 18)
-        v = block_rules.evaluate(rec, alpha=0.05)
+        v = exclusion.evaluate(rec, alpha=0.05)
         assert (v["n_trials"], v["n_answered"], v["n_correct"]) == (170, 152, 95)
         assert v["exclude"] is False, v["reason"]
         bids_io.load_events = lambda r, **k: events(70, 70, 30)      # a guessing block
-        assert block_rules.evaluate(rec, alpha=0.05)["exclude"] is False
+        assert exclusion.evaluate(rec, alpha=0.05)["exclude"] is False
         bids_io.load_events = lambda r, **k: events(50, 100, 20)
-        assert block_rules.evaluate(rec, alpha=0.05)["reason"].startswith("reversal")
+        assert exclusion.evaluate(rec, alpha=0.05)["reason"].startswith("reversal")
         bids_io.load_events = lambda r, **k: events(100, 28, 42)     # 24.7 % timeouts
-        assert block_rules.evaluate(rec, alpha=0.05)["exclude"] is False
+        assert exclusion.evaluate(rec, alpha=0.05)["exclude"] is False
         bids_io.load_events = lambda r, **k: events(100, 27, 43)     # 25.3 % timeouts
-        v = block_rules.evaluate(rec, alpha=0.05)
+        v = exclusion.evaluate(rec, alpha=0.05)
         assert v["exclude"] is True and v["reason"].startswith("timeouts"), v["reason"]
         assert v["technical_exclude"] is False
 
         bids_io.load_events = lambda r, **k: events(120, 40, 10)
         bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "6.3"}
-        v = block_rules.evaluate(rec, alpha=0.05)
+        v = exclusion.evaluate(rec, alpha=0.05)
         assert v["technical_exclude"] is True and v["reason"].startswith("frame rate"), v
         bids_io.scan_meta = lambda r: {"visit": 1, "effective_sampling_hz": "58.8"}
         bids_io.load_events = lambda r, **k: events(120, 40, 10, dur=0.53)
-        v = block_rules.evaluate(rec, alpha=0.05)
+        v = exclusion.evaluate(rec, alpha=0.05)
         assert v["technical_exclude"] is True and "stimulus" in v["reason"], v
     finally:
-        bids_io.load_events, bids_io.scan_meta, block_rules.calibration_verdict = old
+        bids_io.load_events, bids_io.scan_meta, exclusion.calibration_verdict = old
 
 
 def test_chance_is_judged_per_participant_and_condition():
     """A weak block of a participant who does the task is kept (55 % next to blocks at
     70 %); a participant who guesses in every block loses them all; a block already out
     for a per-block criterion or on the manual list stays out of the pool."""
-    import block_rules
+    import exclusion
 
     def row(sub, cond, rec, k, n, out=False):
         return {"recording": rec, "participant": sub, "condition": cond,
@@ -1924,7 +1808,7 @@ def test_chance_is_judged_per_participant_and_condition():
             row("sub-01", "standing", "a4", 84, 160),                   # 52.5 % alone
             row("sub-02", "walking", "b1", 80, 160), row("sub-02", "walking", "b2", 83, 160),
             row("sub-02", "walking", "b3", 150, 160)]                   # manual: left out
-    block_rules.pool_chance(rows, manual={"b3": "flipped view"}, alpha=0.05)
+    exclusion.pool_chance(rows, manual={"b3": "flipped view"}, alpha=0.05)
     by = {r["recording"]: r for r in rows}
     assert not by["a2"]["rule_exclude"] and by["a2"]["chance_n_answered"] == 320
     assert by["a3"]["rule"] == "reversal" and by["a3"]["chance_n_answered"] == "n/a"
@@ -1938,7 +1822,7 @@ def test_presentation_rule_flags_artefacts_in_the_presentation_window():
     """A frozen pose, a jump or a gap anywhere from 0.3 s before onset to 0.1 s after the
     Gabor's offset flags the trial; one repeated frame, or an artefact outside the window,
     does not."""
-    import presentation
+    import exclusion
     fs = 60.0
     t = np.arange(0, 20, 1 / fs)
     m = pd.DataFrame({"t": t, "head_local_pos_x": 0.01 * np.sin(2 * np.pi * 0.9 * t),
@@ -1950,8 +1834,8 @@ def test_presentation_rule_flags_artefacts_in_the_presentation_window():
     m.loc[(t >= 12.0) & (t < 12.5), "head_local_pos_x"] += 1.0      # 1 m jump
     m = m[~((t > 15.0) & (t < 15.5))].reset_index(drop=True)         # 0.5 s dropout
     onset = np.array([5.35, 4.6, 4.85, 10.0, 12.2, 15.2, 8.0])
-    flagged, why = presentation.flag_trials(onset, np.full(onset.size, 0.1),
-                                            presentation.artefact_spans(m))
+    flagged, why = exclusion.flag_trials(onset, np.full(onset.size, 0.1),
+                                            exclusion.artefact_spans(m))
     assert flagged.tolist() == [True, False, True, False, True, True, False], why
     assert why[0] == "freeze" and why[2] == "freeze" and why[5] == "gap"
     assert "jump" in why[4] or "spike" in why[4]
@@ -1964,8 +1848,7 @@ def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
     rule off every trial is back."""
     import tempfile
     import bids_io
-    import block_rules
-    import presentation
+    import exclusion
     old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_PRESENTATION_RULE)
     rng = np.random.default_rng(4)
     with tempfile.TemporaryDirectory() as td:
@@ -1975,11 +1858,11 @@ def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
             C.APPLY_PRESENTATION_RULE = True
             bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
             rec = bids_io.find_recordings(bids, include_excluded=True)[0]
-            before = {r["recording"]: r for r in block_rules.main(quiet=True)}[rec.label()]
+            before = {r["recording"]: r for r in exclusion.rules_main(quiet=True)}[rec.label()]
             n_valid = len(bids_io.load_events(rec))
             ev = bids_io.load_events(rec, presentation_rule=False)
             target = ev[(ev["is_training"] == 0)
-                        & presentation.valid_mask(rec, ev)].iloc[3]
+                        & exclusion.valid_mask(rec, ev)].iloc[3]
             motion, channels, _ = bids_io.load_motion(rec)
             win = (motion["t"] >= target["onset"] - 0.1) & (motion["t"] <= target["onset"] + 0.1)
             motion.loc[win, "mocap_frame_advanced"] = 0
@@ -1988,10 +1871,10 @@ def test_load_events_leaves_out_trials_shown_during_a_tracking_freeze():
             kept = bids_io.load_events(rec)                  # flags rebuilt: motion is newer
             assert len(kept) == n_valid - 1
             assert not np.isclose(kept["onset"], target["onset"]).any()
-            after = {r["recording"]: r for r in block_rules.main(quiet=True)}[rec.label()]
+            after = {r["recording"]: r for r in exclusion.rules_main(quiet=True)}[rec.label()]
             assert after["n_presentation_flagged"] == before["n_presentation_flagged"] + 1
             assert after["n_trials"] == before["n_trials"] - 1
-            flags = presentation.trial_flags(rec, ev)
+            flags = exclusion.trial_flags(rec, ev)
             assert flags.loc[np.isclose(ev["onset"], target["onset"]),
                              "presentation_flag"].item() == "freeze"
             C.APPLY_PRESENTATION_RULE = False
@@ -2007,7 +1890,7 @@ def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
     pooled refit, but the above-chance block run on it stays in."""
     import tempfile
     import bids_io
-    import block_rules
+    import exclusion
     old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
     rng = np.random.default_rng(0)
     with tempfile.TemporaryDirectory() as td:
@@ -2026,7 +1909,7 @@ def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
                  ).write_text('{"verdict": "%s"}' % verdict)
 
             C.APPLY_BLOCK_RULE = False
-            rows = {bids_io._brief(r["recording"]): r for r in block_rules.main()
+            rows = {bids_io._brief(r["recording"]): r for r in exclusion.rules_main()
                     if r["unit"] == "block"}
             assert (bids / "derivatives" / "qc" / bids_io.GATE_FILE).exists()
             assert rows["sub-01 walking run-01"]["rule_exclude"] is False
@@ -2041,7 +1924,7 @@ def test_gate_scopes_rule_to_behaviour_and_keeps_gait():
             assert len(bids_io.find_recordings(bids, scope="gait")) == 3
             assert len(bids_io.find_recordings(bids, include_excluded=True)) == 3
             assert list(bids_io.excluded_calibrations()) == [bids_io.calibration_label(cal_beh)]
-            fit = cr.refit_from_bids()
+            fit = cal.refit_from_bids()
             assert set(fit["by_condition"]) == {"standing"}, "the UNRELIABLE one was refit"
             assert fit["excluded_by_gate"] == [bids_io.calibration_label(cal_beh)]
             gate = pd.read_csv(bids / "derivatives" / "qc" / bids_io.GATE_FILE, sep="\t")
@@ -2060,7 +1943,7 @@ def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
     gate_report logs the stage's N, and prunes outputs of excluded units."""
     import tempfile
     import bids_io
-    import block_rules
+    import exclusion
     old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
     rng = np.random.default_rng(1)
     with tempfile.TemporaryDirectory() as td:
@@ -2076,7 +1959,7 @@ def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
             C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
             C.APPLY_BLOCK_RULE = True
             bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            block_rules.main(quiet=True)
+            exclusion.rules_main(quiet=True)
             assert bids_io.gate_staleness() is None
             bidsify.convert_all(raw_dir=late, bids_dir=bids, prune_loose=False)
             assert "added" in bids_io.gate_staleness()
@@ -2119,35 +2002,8 @@ def test_gate_rebuilds_when_stale_and_ledger_counts_each_stage():
 
 
 # ---------------------------------------------------------------------------
-# Exploratory gait modules: phaser, head stability, gait dynamics, gait PRC
+# Exploratory gait modules: head motion, gait dynamics, gait PRC
 # ---------------------------------------------------------------------------
-def test_phaser_combines_channels_better_than_any_single_one():
-    """On a synthetic oscillator with a non-uniform waveform, the multi-channel phase is
-    closer to the true (uniform) phase than the best single-channel Hilbert phase."""
-    import phaser
-    from scipy.signal import detrend
-    fs = 90.0
-    t = np.arange(0, 240, 1 / fs)
-    rng = np.random.default_rng(3)
-    psi = 2 * np.pi * 0.85 * t                      # true phase, 1 cycle per stride
-    phi = psi + 0.3 * np.sin(psi)
-    bp = lambda x: gait_mod._bandpass(detrend(x), fs, 0.3, 5.0)   # noqa: E731
-    lat = bp(np.cos(phi) + 0.25 * np.cos(2 * phi) + rng.normal(0, .35, t.size))
-    roll = bp(np.sin(phi + .7) + rng.normal(0, .5, t.size))
-    vert = bp(np.cos(2 * phi + 1) + 0.3 * np.cos(4 * phi) + rng.normal(0, .35, t.size))
-    valid = np.ones(t.size, bool)
-    valid[(t > 100) & (t < 108)] = False
-
-    def err(est):
-        ok = valid & np.isfinite(est)
-        d = np.angle(np.exp(1j * (est[ok] - psi[ok])))
-        d = np.angle(np.exp(1j * (d - np.angle(np.mean(np.exp(1j * d))))))
-        return np.degrees(np.sqrt(np.mean(d ** 2)))
-    single = min(err(phaser.protophase(lat)), err(phaser.protophase(vert) / 2))
-    combined, info = phaser.stride_phase(t, {"lat": lat, "roll": roll}, {"vert": vert}, valid)
-    assert err(combined) < 0.7 * single, (err(combined), single)
-    assert np.isnan(combined[(t > 101) & (t < 107)]).all(), "phase invented in the gap"
-    assert abs(sum(c["weight"] for c in info["channels"].values()) - 1) < 1e-6
 
 
 def test_dfa_recovers_white_and_pink_noise_exponents():
@@ -2178,7 +2034,7 @@ def test_stride_runs_break_at_gaps_not_across_them():
 def test_gait_prc_detects_an_injected_phase_advance():
     """Steps after an event come 30 ms early: the shift is negative at the injected size
     and random times show none."""
-    import gait_prc as prc
+    import gait_dynamics as gd
     rng = np.random.default_rng(1)
     step = 0.6
     events = np.sort(rng.uniform(10, 590, 150))
@@ -2190,8 +2046,8 @@ def test_gait_prc_detects_an_injected_phase_advance():
             nxt -= 0.03                                    # the perturbation
         t = nxt
     tr = np.asarray(tr)
-    ev = prc.shifts(events, tr)["shift"][:, prc.K_REPORT - 1]
-    rnd = prc.shifts(rng.uniform(10, 590, 3000), tr)["shift"][:, prc.K_REPORT - 1]
+    ev = gd.shifts(events, tr)["shift"][:, gd.K_REPORT - 1]
+    rnd = gd.shifts(rng.uniform(10, 590, 3000), tr)["shift"][:, gd.K_REPORT - 1]
     injected = -100 * 0.03 / step                          # -5 % of a step
     assert abs(np.nanmean(ev) - np.nanmean(rnd) - injected) < 1.5, np.nanmean(ev)
     assert abs(np.nanmean(rnd)) < 2.0
@@ -2201,7 +2057,7 @@ def test_head_fixation_point_and_pitch_axis_recovered():
     """Pitch that exactly fixes a target at 1.2 m gives a 1.2 m fixation point; the pitch
     axis is found from a rotation about x at the step frequency, oriented towards -x (the
     mocap frame's z points backward, so that is nose-down positive)."""
-    import head_stability as hs
+    import head_motion as hm
     fs, step_hz = 90.0, 1.7
     t = np.arange(0, 120, 1 / fs)
     y = 0.01 * np.cos(2 * np.pi * step_hz * t)
@@ -2211,13 +2067,13 @@ def test_head_fixation_point_and_pitch_axis_recovered():
     rng = np.random.default_rng(0)
     rv = np.column_stack([pitch * 20, 3 * np.sin(2 * np.pi * step_hz / 2 * t),
                           2 * np.sin(2 * np.pi * step_hz / 2 * t + 1)]) + rng.normal(0, .1, (t.size, 3))
-    axis, share = hs.pitch_axis(rv, fs, step_hz)
+    axis, share = hm.pitch_axis(rv, fs, step_hz)
     assert axis[0] < -0.95 and share > 0.5, (axis, share)
     # the same pitch 60 deg late: the size still says 1.2 m, the lag is read as such,
     # and the least-squares distance shrinks by cos(60 deg)
     late = np.degrees(np.arctan(0.01 * np.cos(2 * np.pi * step_hz * t - np.pi / 3) / 1.2))
-    _, phase, gain = hs._step_coupling(y, late, fs, step_hz)
-    assert abs(-phase - 60) < 2 and abs(hs.fixation_point_m(gain) - 1.2) < 0.03, (phase, gain)
+    _, phase, gain = hm._step_coupling(y, late, fs, step_hz)
+    assert abs(-phase - 60) < 2 and abs(hm.fixation_point_m(gain) - 1.2) < 0.03, (phase, gain)
     tl = np.tan(np.radians(late))
     assert abs(np.cov(y, tl, bias=True)[0, 1] / np.var(tl) - 0.6) < 0.01
 
@@ -2225,15 +2081,15 @@ def test_head_fixation_point_and_pitch_axis_recovered():
 def test_head_kinematics_coupling_reads_yaw_and_roll_against_the_sway():
     """Yaw turning back to the midline 10 % of a stride after the head is furthest out, and
     roll tilting to the left 15 % before it gets there, are read as such."""
-    import head_kinematics as hk
+    import head_motion as hm
     amp = {"lateral": {"amp_1cps": 20.0, "peak_1cps_pct": 25.0},
            "yaw": {"amp_1cps": float(np.degrees(np.arctan(0.02))), "peak_1cps_pct": 85.0},
            "roll": {"amp_1cps": 1.0, "peak_1cps_pct": 60.0}}
-    c = hk.coupling(amp)
+    c = hm.coupling(amp)
     assert abs(c["yaw_lag_pct"] - 10) < 1e-9 and abs(c["roll_lead_pct"] + 15) < 1e-9
     assert abs(c["yaw_fixation_m"] - 1.0) < 1e-9
     amp["yaw"]["peak_1cps_pct"] = 2.0                  # wraps across the stride boundary
-    assert abs(hk.coupling(amp)["yaw_lag_pct"] - 27) < 1e-9
+    assert abs(hm.coupling(amp)["yaw_lag_pct"] - 27) < 1e-9
 
 
 def test_rig_check_reads_every_segment_of_the_script():
@@ -2282,15 +2138,6 @@ def test_rig_check_reads_every_segment_of_the_script():
     assert all(v < 0 for v in rows[2]["mocap_z_peak_m"])
 
 
-def test_phase_locked_r2_rewards_the_more_accurate_phase():
-    import gait_phase_methods as gpm
-    rng = np.random.default_rng(0)
-    true = rng.uniform(0, 100, 20000)
-    x = np.sin(2 * np.pi * true / 100) + rng.normal(0, .3, true.size)
-    noisy = (true + rng.normal(0, 15, true.size)) % 100
-    assert gpm.phase_locked_r2(true, x) > gpm.phase_locked_r2(noisy, x) + 0.1
-
-
 # ---------------------------------------------------------------------------
 # Accuracy over answered trials; timeouts as a measure of their own
 # ---------------------------------------------------------------------------
@@ -2313,7 +2160,7 @@ def test_accuracy_leaves_timeouts_out_of_numerator_and_denominator():
     condition hit rate alike; the timeout outcome keeps every trial."""
     import tempfile
     import bids_io
-    import conditions
+    import conditions as cond
     old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
     with tempfile.TemporaryDirectory() as td:
         raw = Path(td) / "raw"; raw.mkdir()
@@ -2344,7 +2191,7 @@ def test_accuracy_leaves_timeouts_out_of_numerator_and_denominator():
             assert tp.loc[tp["timeout"] == 0, "acc"].isin([0.0, 1.0]).all()
             answered = ev[ev["response"].notna()]
             want = float((answered["response_correct"] == 1).mean())
-            row = conditions._aggregate().iloc[0]
+            row = cond._aggregate().iloc[0]
             assert abs(row["hit_rate"] - want) < 1e-12
         finally:
             C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE = old
@@ -2356,7 +2203,7 @@ def test_accuracy_leaves_timeouts_out_of_numerator_and_denominator():
 def test_trial_table_step_and_foot_follow_the_gait_arrays():
     """Each onset gets the step it falls in, that step's foot and evidence, and the % step
     gait.phase_at gives it; an onset in a gap, or before the first trough, gets none."""
-    import trial_table as tt
+    import tables as tt
     steps = np.arange(0, 20, 0.5)
     troughs = np.concatenate([steps[steps < 8], steps[steps > 14]])
     n_steps = troughs.size - 1
@@ -2375,7 +2222,7 @@ def test_trial_table_step_and_foot_follow_the_gait_arrays():
 def test_trial_table_rt_rule_matches_phase_analysis():
     """rt_valid keeps exactly the trials phase_analysis's RT hygiene keeps: correct,
     answered, no anticipations, no log-RT outliers, training trials never."""
-    import trial_table as tt
+    import tables as tt
     rng = np.random.default_rng(3)
     n = 400
     rt = np.exp(rng.normal(np.log(0.8), 0.25, n))
@@ -2398,7 +2245,7 @@ def test_block_schedule_orders_blocks_and_measures_breaks():
     end of the previous block (start + duration) to the start of this one."""
     from types import SimpleNamespace
     import bids_io
-    import trial_table as tt
+    import tables as tt
     meta = {"w1": ("1", "2026-10-06T10:20:00", "first", "600"),
             "w2": ("1", "2026-10-06T10:00:00", "first", "600"),
             "s1": ("1", "2026-10-06T10:40:00", "second", "700"),
@@ -2421,11 +2268,11 @@ def test_step_table_recovers_steps_feet_and_sway():
     """On a clean synthetic walk every step is one half stride, the feet alternate, the
     sway sign follows the foot (code 0 = positive sway) and the bob spans the full
     vertical swing; a missed trough leaves one long step flagged invalid, with no sway."""
-    import step_table as stt
+    import tables as tt
     t, vertical, lateral, troughs = _synth_gait()
     troughs = np.delete(troughs, 40)                       # one missed trough
     lab = gait_mod.label_steps(t, lateral, troughs)
-    df = stt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"], lab["step_margin"])
+    df = tt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"], lab["step_margin"])
     assert len(df) == troughs.size - 1
     bad = df[df["valid_step"] == 0]
     assert bad["step"].tolist() == [40] and bad["lateral_sway_m"].isna().all()
@@ -2437,7 +2284,7 @@ def test_step_table_recovers_steps_feet_and_sway():
     assert (sign == ok["stance_foot"]).mean() > 0.95
     assert np.allclose(ok["vertical_range_m"], 2.0, atol=0.05)
     assert df["stride"].diff().dropna().isin([0, 1]).all()
-    untrusted = stt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"],
+    untrusted = tt.steps_frame(t, lateral, vertical, troughs, lab["step_foot"],
                                 lab["step_margin"], trust_feet=False)
     assert untrusted["stance_foot"].isna().all() and untrusted["stride"].isna().all()
 
@@ -2448,7 +2295,7 @@ def test_tables_ignore_gait_output_left_over_for_a_gait_excluded_block():
     import tempfile
     from types import SimpleNamespace
     import bids_io
-    import trial_table as tt
+    import tables as tt
     with tempfile.TemporaryDirectory() as tmp:
         rec = SimpleNamespace(sub="sub-01", ses="ses-02", label=lambda: "blk")
         np.savez(Path(tmp) / "blk_gait.npz", t=np.arange(10.0), troughs=np.arange(5.0))
@@ -2467,8 +2314,7 @@ def test_trial_and_step_tables_cover_every_block_and_join():
     with their gate decision, and walking trials join their step in the step table."""
     import tempfile
     import bids_io
-    import step_table as stt
-    import trial_table as tt
+    import tables as tt
     old = (C.BIDS_DIR, C.DERIV_DIR, C.APPLY_BLOCK_RULE)
     rng = np.random.default_rng(2)
     with tempfile.TemporaryDirectory() as td:
@@ -2477,8 +2323,8 @@ def test_trial_and_step_tables_cover_every_block_and_join():
             C.BIDS_DIR, C.DERIV_DIR = bids, bids / "derivatives"
             C.APPLY_BLOCK_RULE = True
             bidsify.convert_all(raw_dir=raw, bids_dir=bids, prune_loose=False)
-            trials = tt.main()
-            steps = stt.main()
+            trials = tt.trials_main()
+            steps = tt.steps_main()
             recs = bids_io.find_recordings(bids, include_excluded=True)
             assert len(trials) == sum(len(bids_io.load_events(r, presentation_rule=False))
                                       for r in recs)
@@ -2508,15 +2354,15 @@ def test_information_per_trial_peaks_above_threshold_and_vanishes_at_the_ends():
     """A trial at 75 % is the reference; information about a threshold shift peaks near
     84 % and falls to zero at chance and at ceiling. Blocks that are too hard lose more
     than blocks equally too easy."""
-    import calibration_cost as cc
+    import power as pw
     import threshold_phase as tph
     assert abs(float(tph.efficiency(0.75)) - 1.0) < 1e-12
     pc = np.linspace(0.51, 0.94, 2000)
     peak = pc[np.argmax(tph.efficiency(pc))]
     assert 0.82 < peak < 0.86, peak
     assert tph.efficiency(0.52) < 0.02 and tph.efficiency(0.949) < 0.02
-    assert abs(float(cc.information_retained(0.0)) - 1.0) < 1e-12
-    harder, easier = (float(cc.information_retained(np.log(r))) for r in (1.3, 1 / 1.3))
+    assert abs(float(pw.information_retained(0.0)) - 1.0) < 1e-12
+    harder, easier = (float(pw.information_retained(np.log(r))) for r in (1.3, 1 / 1.3))
     assert harder < 0.6 < 0.95 < easier, (harder, easier)
 
 
@@ -2552,15 +2398,15 @@ def test_threshold_phase_recovers_a_threshold_modulation_at_any_operating_point(
 def test_calibration_cost_runs_on_the_validated_simulator():
     """The cost simulation's estimator reproduces davidson_power's for the confirmatory
     values, and both tests' studentised sums have their null expectation of N."""
-    import calibration_cost as cc
+    import power as pw
     rng = np.random.default_rng(2)
-    log_r = rng.normal(0.1, 0.25, (200, cc.VISITS))
-    t = cc.dp.simulate_tables(rng, cc.dp.draw_coefficients(rng, (200,)), cc.TRIALS,
-                              cc.visit_mix(log_r))
-    ref = cc.dp.estimate(t)
-    z, s2 = cc.estimate_values(t, *cc.accuracy_values(t))
+    log_r = rng.normal(0.1, 0.25, (200, pw.VISITS))
+    t = pw.dp.simulate_tables(rng, pw.dp.draw_coefficients(rng, (200,)), pw.TRIALS,
+                              pw.visit_mix(log_r))
+    ref = pw.dp.estimate(t)
+    z, s2 = pw.estimate_values(t, *pw.accuracy_values(t))
     assert np.allclose(z, ref.z) and np.allclose(s2, ref.s2)
-    null = cc.study_stats(rng, 10, 400, lambda r, shape: r.normal(0.1, 0.25, shape), 0.0)
+    null = pw.study_stats(rng, 10, 400, lambda r, shape: r.normal(0.1, 0.25, shape), 0.0)
     assert np.allclose(null.mean(0), 10, atol=0.6), null.mean(0)
 
 
@@ -2570,7 +2416,7 @@ def test_calibration_cost_runs_on_the_validated_simulator():
 def test_roll_effect_recovers_the_equivalent_tilt_and_is_flat_without_it():
     """A roll that acts as 0.3 deg of tilt per deg is recovered and detected; with no roll
     effect the estimate stays within its error."""
-    import roll_bias as rb
+    import response_bias as rbias
     rng = np.random.default_rng(3)
     n = 1200
     block = np.repeat(np.arange(4), n // 4)
@@ -2579,7 +2425,7 @@ def test_roll_effect_recovers_the_equivalent_tilt_and_is_flat_without_it():
     offset = np.array([-0.2, 0.0, 0.1, 0.3])[block]
     for g, detect in ((0.3, True), (0.0, False)):
         y = (rng.random(n) < 1 / (1 + np.exp(-(1.5 * (tilt + g * roll) + offset)))).astype(float)
-        r = rb.roll_effect(y, tilt, roll, block, n_perm=200, rng=np.random.default_rng(1))
+        r = rbias.roll_effect(y, tilt, roll, block, n_perm=200, rng=np.random.default_rng(1))
         assert abs(r["equivalent_tilt"] - g) < 3 * r["equivalent_tilt_se"] + 0.02, r
         assert (r["p"] < 0.05) == detect, r["p"]
 
@@ -2596,13 +2442,13 @@ def test_criterion_contrast_finds_a_stance_foot_lean_the_accuracy_contrast_misse
     p_right = 1 / (1 + np.exp(-(1.2 * np.where(is_right, 1, -1) + lean)))
     said = (rng.random(stride.size) < p_right).astype(float)
     acc = (said == is_right).astype(float)
-    crit = sfoot.criterion_contrast(is_right, said, foot, stride, n_perm=500,
+    crit = rbias.criterion_contrast(is_right, said, foot, stride, n_perm=500,
                                     rng=np.random.default_rng(0))
     assert crit["p"] < 0.01 and crit["delta"] < 0, crit["p"]
-    towards = sfoot.towards_label(foot, is_right)
-    tw = sfoot.stance_contrast(acc, towards, stride, n_perm=500, rng=np.random.default_rng(0))
+    towards = rbias.towards_label(foot, is_right)
+    tw = rbias.stance_contrast(acc, towards, stride, n_perm=500, rng=np.random.default_rng(0))
     assert tw["p"] < 0.01, tw["p"]
-    plain = sfoot.stance_contrast(acc, foot, stride, n_perm=500, rng=np.random.default_rng(0))
+    plain = rbias.stance_contrast(acc, foot, stride, n_perm=500, rng=np.random.default_rng(0))
     assert abs(plain["z"]) < 3, plain["z"]
 
 
@@ -2624,34 +2470,6 @@ def test_press_phase_null_holds_and_detects_presses_locked_to_the_step():
     assert free["2cps"]["p_holm"] > 0.05, free["2cps"]["p_holm"]
     assert locked["2cps"]["p_holm"] < 0.01, locked["2cps"]["p_holm"]
     assert abs(locked["2cps"]["peak_pct_stride"] - 20.0) < 3.0, locked["2cps"]["peak_pct_stride"]
-
-
-def test_press_accuracy_null_holds_with_slower_errors_and_detects_a_press_locked_effect():
-    """Errors that are merely slower are not flagged at the press; accuracy that oscillates
-    with the press phase is, and the onset locking sees it attenuated."""
-    import press_accuracy as pacc
-    import press_phase as pp
-    rng = np.random.default_rng(8)
-    troughs = np.arange(0.0, 900.0, 0.6)
-    gait = (troughs, np.tile([0, 1], troughs.size // 2 + 1)[:troughs.size - 1], None, None)
-    onset = np.sort(rng.uniform(2, 890, 1500))
-    onset_phase = pp.press_phases(onset, np.zeros_like(onset), gait)
-    rt = rng.uniform(0.5, 1.2, onset.size)
-    y_null = (rng.random(onset.size) < 0.75).astype(float)
-    rt_null = rt + 0.2 * (y_null == 0)                       # errors slower, no gait link
-    press = pp.press_phases(onset, rt, gait)
-    y_eff = (rng.random(onset.size) < 0.75 + 0.15 * np.cos(4 * np.pi * press / 100.0)).astype(float)
-    mk = lambda r, y: [{"onset": onset, "rt": r, "y": y, "onset_phase": onset_phase,
-                        "gait": gait, "stride_s": 1.2}]
-    null = pacc.analyse_blocks(mk(rt_null, y_null), "press", n_perm=300,
-                               rng=np.random.default_rng(0))
-    eff = pacc.analyse_blocks(mk(rt, y_eff), "press", n_perm=300, rng=np.random.default_rng(0))
-    eff_on = pacc.analyse_blocks(mk(rt, y_eff), "onset", n_perm=300,
-                                 rng=np.random.default_rng(0))
-    assert null["2cps"]["p_holm"] > 0.05, null["2cps"]["p_holm"]
-    assert eff["2cps"]["p_holm"] < 0.01, eff["2cps"]["p_holm"]
-    assert abs(eff["2cps"]["amplitude"] - 0.15) < 0.05, eff["2cps"]["amplitude"]
-    assert eff_on["2cps"]["amplitude"] < 0.6 * eff["2cps"]["amplitude"]
 
 
 def test_group_curve_fit_matches_lstsq_and_flags_a_shared_step_rate_curve():
@@ -2681,25 +2499,25 @@ def test_sdt_stride_rate_test_detects_a_criterion_that_flips_once_per_stride():
     sig = rng.random(n) < 0.5
     bias = 0.5 * np.cos(2 * np.pi * phase / 100.0)
     said = rng.random(n) < 1 / (1 + np.exp(-(1.2 * np.where(sig, 1, -1) + bias)))
-    r = sdt.analyse_measure(phase, sig, said, "criterion", nperm=300,
+    r = rbias.analyse_measure(phase, sig, said, "criterion", nperm=300,
                             rng=np.random.default_rng(0))
     assert r["p_1cps"] < 0.01, r["p_1cps"]
 
 
 def test_head_kinematics_harmonic_recovers_amplitude_and_peak():
-    import head_kinematics as hk
-    x = (np.arange(hk.N_BINS) + 0.5) * 100.0 / hk.N_BINS
+    import head_motion as hm
+    x = (np.arange(hm.N_BINS) + 0.5) * 100.0 / hm.N_BINS
     prof = 0.8 * np.cos(2 * np.pi * (x - 30.0) / 100.0) + 0.2 * np.cos(4 * np.pi * x / 100.0)
-    a1, p1 = hk.harmonic(prof, 1.0)
-    a2, _ = hk.harmonic(prof, 2.0)
+    a1, p1 = hm.harmonic(prof, 1.0)
+    a2, _ = hm.harmonic(prof, 2.0)
     assert abs(a1 - 0.8) < 0.01 and abs(p1 - 30.0) < 0.5 and abs(a2 - 0.2) < 0.01
 
 
 def test_shared_power_holds_its_level_and_rises_with_the_shared_amplitude():
-    import shared_power as shp
-    res = shp.power_curve(np.random.default_rng(7), [800] * 8, amps=np.array([0.0, 0.03]),
+    import power as pw
+    res = pw.shared_power_curve(np.random.default_rng(7), [800] * 8, amps=np.array([0.0, 0.03]),
                           nsim=400, nnull=2000)
-    for t in shp.TESTS:
+    for t in pw.SHARED_TESTS:
         assert res[t][0] < 0.09, (t, res[t])
         assert res[t][1] > res[t][0] + 0.2, (t, res[t])
     assert res["pooled"][1] >= res["agnostic"][1]
